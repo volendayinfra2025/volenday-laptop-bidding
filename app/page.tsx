@@ -266,6 +266,13 @@ export default function Home() {
   const [authPassword, setAuthPassword] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
   const [isForgotPass, setIsForgotPass] = useState(false); 
+  const [authFullName, setAuthFullName] = useState("");
+  const [landingView, setLandingView] = useState<'hero' | 'form'>('hero');
+  const [isMagicLinkMode, setIsMagicLinkMode] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [isMagicLinkSent, setIsMagicLinkSent] = useState(false);
+  const [landingAuthError, setLandingAuthError] = useState("");
+  const [expiredLinkMessage, setExpiredLinkMessage] = useState("");
 
   // DB Submission & History State
   const [isSubmittingBid, setIsSubmittingBid] = useState(false);
@@ -293,9 +300,28 @@ export default function Home() {
   // ---------------- DATA FETCHING ----------------
   
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setUser(session?.user ?? null));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setIsAuthChecking(false);
+    });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null));
     return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash) {
+      const params = new URLSearchParams(hash.substring(1));
+      const errorDesc = params.get('error_description');
+      const errorCode = params.get('error_code');
+      if (errorDesc || errorCode) {
+        const message = errorDesc 
+          ? decodeURIComponent(errorDesc.replace(/\+/g, ' ')) 
+          : 'This link is no longer valid.';
+        setExpiredLinkMessage(message);
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    }
   }, []);
 
   const fetchLaptops = async () => {
@@ -314,7 +340,7 @@ export default function Home() {
     setIsLoading(false);
   };
 
-  useEffect(() => { fetchLaptops(); }, []);
+  useEffect(() => { if (user) fetchLaptops(); }, [user]);
 
   const fetchMyBids = async () => {
     if (!user) return setMyBids([]);
@@ -436,14 +462,19 @@ export default function Home() {
       if (selectedLaptop.bidsCount > 0) {
         const { data: prevBidData } = await supabase
           .from('bids')
-          .select('email')
+          .select('email, user_id')
           .eq('laptop_id', selectedLaptop.id)
           .order('amount', { ascending: false })
           .limit(1)
           .single();
           
-        if (prevBidData) previousBidderEmail = prevBidData.email;
+        if (prevBidData && prevBidData.user_id !== user.id) {
+          previousBidderEmail = prevBidData.email;
+        }
       }
+
+      // FIX: Securely delete any existing bid this user has on this laptop BEFORE inserting to prevent duplicate history
+      await supabase.from('bids').delete().eq('laptop_id', selectedLaptop.id).eq('user_id', user.id);
 
       const { error: bidError } = await supabase.from('bids').insert({
         laptop_id: selectedLaptop.id, 
@@ -457,11 +488,14 @@ export default function Home() {
       });
       if (bidError) throw bidError;
 
-      const newBidsCount = selectedLaptop.bidsCount + 1;
+      // FIX: Calculate the exact new count dynamically so it perfectly syncs with the database
+      const { count } = await supabase.from('bids').select('*', { count: 'exact', head: true }).eq('laptop_id', selectedLaptop.id);
+      const newBidsCount = count || 0;
+
       const { error: laptopError } = await supabase.from('laptops').update({ current_bid: bidAmount, bids_count: newBidsCount }).eq('id', selectedLaptop.id);
       if (laptopError) throw laptopError;
       
-      if (previousBidderEmail && previousBidderEmail !== user.email) {
+      if (previousBidderEmail) {
         fetch('/api/email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -542,7 +576,11 @@ export default function Home() {
         setIsLoginModalOpen(false);
         setIsResetSentOpen(true);
       } else if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
+        const { error } = await supabase.auth.signUp({ 
+          email: authEmail, 
+          password: authPassword,
+          options: { data: { full_name: authFullName } }
+        });
         if (error) throw error;
         setIsLoginModalOpen(false);
         setIsSignUpSuccessOpen(true);
@@ -552,9 +590,45 @@ export default function Home() {
         setIsLoginModalOpen(false);
         setIsLoginSuccessOpen(true); 
       }
-      setAuthEmail(""); setAuthPassword("");
+      setAuthEmail(""); setAuthPassword(""); setAuthFullName("");
     } catch (error: any) { 
       setAuthErrorMsg(error.message); 
+    }
+  };
+
+  const handleLandingAuth = async () => {
+    setLandingAuthError("");
+    let showCheckEmail = false;
+    try {
+      if (isForgotPass) {
+        const { error } = await supabase.auth.resetPasswordForEmail(authEmail, {
+          redirectTo: `${window.location.origin}/`,
+        });
+        if (error) throw error;
+        showCheckEmail = true;
+      } else if (isMagicLinkMode) {
+        const { error } = await supabase.auth.signInWithOtp({ email: authEmail });
+        if (error) throw error;
+        showCheckEmail = true;
+      } else if (isSignUp) {
+        const { error } = await supabase.auth.signUp({ 
+          email: authEmail, 
+          password: authPassword,
+          options: { data: { full_name: authFullName } }
+        });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
+        if (error) throw error;
+      }
+      setAuthPassword(""); setAuthFullName("");
+      if (showCheckEmail) {
+        setIsMagicLinkSent(true);
+      } else {
+        setAuthEmail("");
+      }
+    } catch (error: any) {
+      setLandingAuthError(error.message);
     }
   };
 
@@ -605,6 +679,258 @@ export default function Home() {
 
   // ---------------- RENDER ----------------
 
+  if (isAuthChecking) {
+    return (
+      <div className="h-screen w-full bg-[#0d1117] flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-[#21262d] border-t-blue-500 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen w-full bg-[#0d1117] flex flex-col relative overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-6 lg:gap-20 px-6 sm:px-10 max-w-6xl mx-auto w-full py-12">
+          
+          {/* Robot/Mascot Area */}
+          <div className="relative flex items-center justify-center shrink-0">
+            <div className="absolute w-80 h-80 sm:w-96 sm:h-96 lg:w-[32rem] lg:h-[32rem] bg-blue-500/5 rounded-full blur-3xl"></div>
+            <img 
+              src="/voly.png" 
+              alt="Voly" 
+              className="w-[19rem] h-[19rem] sm:w-[24.5rem] sm:h-[24.5rem] lg:w-[31.5rem] lg:h-[31.5rem] relative z-10 drop-shadow-[0_0_40px_rgba(59,130,246,0.15)] object-contain"
+            />
+          </div>
+
+          {/* Content Area */}
+          <div className="flex flex-col items-center lg:items-start text-center lg:text-left max-w-md w-full">
+            
+            {landingView === 'hero' && (
+              <>
+                <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold text-white leading-[1.15] mb-4 tracking-tight">
+                  Affordable laptops in your fingertips
+                </h1>
+                <p className="text-gray-400 text-sm sm:text-[15px] mb-10 leading-relaxed">
+                  Powered by Voly, our dependable AI-Agent to assist you from browsing to check out.
+                </p>
+                <div className="flex flex-col gap-3 w-full max-w-xs mx-auto lg:mx-0">
+                  <button 
+                    onClick={() => { setLandingView('form'); setIsSignUp(true); setIsForgotPass(false); setLandingAuthError(""); setIsMagicLinkMode(false); setIsMagicLinkSent(false); }}
+                    className="w-full py-3.5 rounded-xl bg-[#2563eb] text-white font-bold text-[15px] hover:bg-[#1d4ed8] active:scale-[0.98] transition-all shadow-lg shadow-blue-500/20 cursor-pointer"
+                  >
+                    Sign Up
+                  </button>
+                  <button 
+                    onClick={() => { setLandingView('form'); setIsSignUp(false); setIsForgotPass(false); setLandingAuthError(""); setIsMagicLinkMode(false); setIsMagicLinkSent(false); }}
+                    className="w-full py-3.5 rounded-xl bg-transparent text-gray-300 font-bold text-[15px] border border-[#30363d] hover:bg-[#161b22] hover:text-white hover:border-gray-500 active:scale-[0.98] transition-all cursor-pointer"
+                  >
+                    Sign In
+                  </button>
+                </div>
+              </>
+            )}
+            
+            {landingView === 'form' && !isMagicLinkSent && (
+              <>
+                <button 
+                  onClick={() => { setLandingView('hero'); setLandingAuthError(""); setIsForgotPass(false); setIsMagicLinkMode(false); }}
+                  className="mb-6 text-gray-500 hover:text-white text-sm flex items-center gap-2 transition cursor-pointer lg:self-start self-center"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                  Back
+                </button>
+                
+                <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2 tracking-tight">
+                  {isForgotPass ? 'Reset Password' : isSignUp ? 'Create an Account' : 'Welcome Back'}
+                </h2>
+                <p className="text-gray-400 text-sm mb-8">
+                  {isForgotPass 
+                    ? "Enter your email and we'll send you a reset link." 
+                    : isSignUp 
+                      ? 'Sign up with your company email to start bidding.' 
+                      : 'Sign in to continue where you left off.'}
+                </p>
+                
+                {landingAuthError && (
+                  <div className="w-full bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 mb-4 text-red-400 text-sm flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+                    {landingAuthError}
+                  </div>
+                )}
+                
+                <div className="space-y-4 w-full">
+                  {isSignUp && !isMagicLinkMode && !isForgotPass && (
+                    <div>
+                      <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Full Name</label>
+                      <input 
+                        type="text" 
+                        placeholder="Juan Dela Cruz" 
+                        value={authFullName} 
+                        onChange={(e) => setAuthFullName(e.target.value)} 
+                        className="w-full bg-[#161b22] border border-[#30363d] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 outline-none text-sm transition" 
+                      />
+                    </div>
+                  )}
+                  
+                  <div>
+                    <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Email Address</label>
+                    <input 
+                      type="email" 
+                      placeholder="you@company.com" 
+                      value={authEmail} 
+                      onChange={(e) => setAuthEmail(e.target.value)} 
+                      onKeyDown={(e) => e.key === 'Enter' && (isMagicLinkMode || isForgotPass) && handleLandingAuth()}
+                      className="w-full bg-[#161b22] border border-[#30363d] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 outline-none text-sm transition" 
+                    />
+                  </div>
+                  
+                  {!isMagicLinkMode && !isForgotPass && (
+                    <div>
+                      <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Password</label>
+                      <input 
+                        type="password" 
+                        placeholder="••••••••" 
+                        value={authPassword} 
+                        onChange={(e) => setAuthPassword(e.target.value)} 
+                        onKeyDown={(e) => e.key === 'Enter' && handleLandingAuth()}
+                        className="w-full bg-[#161b22] border border-[#30363d] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 outline-none text-sm transition" 
+                      />
+                    </div>
+                  )}
+                  
+                  <button 
+                    onClick={handleLandingAuth}
+                    className="w-full py-3.5 rounded-xl bg-[#2563eb] text-white font-bold text-[15px] hover:bg-[#1d4ed8] active:scale-[0.98] transition-all shadow-lg shadow-blue-500/20 cursor-pointer"
+                  >
+                    {isForgotPass ? 'Send Reset Link' : isMagicLinkMode ? 'Send Magic Link' : isSignUp ? 'Create Account' : 'Sign In'}
+                  </button>
+                  
+                  {!isForgotPass && (
+                    <>
+                      <div className="flex items-center gap-4 py-1">
+                        <div className="flex-1 h-px bg-[#30363d]"></div>
+                        <span className="text-xs text-gray-600">or</span>
+                        <div className="flex-1 h-px bg-[#30363d]"></div>
+                      </div>
+                      
+                      <button 
+                        onClick={() => { setIsMagicLinkMode(!isMagicLinkMode); setLandingAuthError(""); }}
+                        className="w-full py-3 rounded-xl bg-[#161b22] border border-[#30363d] text-gray-400 font-medium text-sm hover:text-gray-200 hover:border-gray-500 transition cursor-pointer"
+                      >
+                        {isMagicLinkMode ? 'Use password instead' : 'Continue with Magic Link'}
+                      </button>
+                    </>
+                  )}
+                </div>
+                
+                <div className="mt-6 flex flex-col gap-3 text-center w-full">
+                  {!isForgotPass && (
+                    <button 
+                      onClick={() => { 
+                        setIsSignUp(!isSignUp); 
+                        setIsMagicLinkMode(false); 
+                        setLandingAuthError(""); 
+                        setAuthFullName(""); 
+                      }}
+                      className="text-sm text-gray-500 hover:text-white transition cursor-pointer underline underline-offset-4"
+                    >
+                      {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+                    </button>
+                  )}
+                  
+                  {!isSignUp && !isForgotPass && !isMagicLinkMode && (
+                    <button 
+                      onClick={() => { setIsForgotPass(true); setLandingAuthError(""); }}
+                      className="text-xs text-gray-600 hover:text-gray-400 transition cursor-pointer"
+                    >
+                      Forgot your password?
+                    </button>
+                  )}
+                  
+                  {isForgotPass && (
+                    <button 
+                      onClick={() => { setIsForgotPass(false); setLandingAuthError(""); }}
+                      className="text-sm text-gray-500 hover:text-white transition cursor-pointer underline underline-offset-4"
+                    >
+                      Back to Sign In
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+            
+            {landingView === 'form' && isMagicLinkSent && (
+              <div className="flex flex-col items-center lg:items-start text-center lg:text-left">
+                <div className="w-16 h-16 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mb-6">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-2">Check Your Email</h2>
+                <p className="text-gray-400 text-sm mb-8 leading-relaxed">
+                  {isForgotPass 
+                    ? <>We&apos;ve sent a password reset link to <strong className="text-gray-200">{authEmail}</strong>. Please check your inbox.</>
+                    : <>We&apos;ve sent a magic link to <strong className="text-gray-200">{authEmail}</strong>. Click the link in your email to sign in.</>
+                  }
+                </p>
+                <button 
+                  onClick={() => { setIsMagicLinkSent(false); setIsForgotPass(false); setLandingView('hero'); setAuthEmail(""); }}
+                  className="py-3 px-8 rounded-xl bg-[#161b22] border border-[#30363d] text-gray-300 font-bold hover:text-white hover:border-gray-500 transition cursor-pointer"
+                >
+                  Back to Home
+                </button>
+              </div>
+            )}
+            
+          </div>
+        </div>
+        
+        {/* Footer */}
+        <div className="pb-8 text-center">
+          <p className="text-gray-600 text-xs tracking-wide">Voly.ai, 2026 | Courtesy of <a href="https://volenday.com" target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-gray-400 transition-colors">volenday.com</a></p>
+        </div>
+        
+        {/* Sparkle decoration */}
+        <div className="absolute bottom-20 right-8 text-gray-700 hidden sm:block">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 11L14.59 13.59L12 22L9.41 13.59L1 11L9.41 8.41L12 0Z"/></svg>
+        </div>
+
+        {/* Expired / Invalid Link Modal */}
+        {expiredLinkMessage && (
+          <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-[#161b22] border border-[#30363d] rounded-2xl w-full max-w-sm p-6 sm:p-8 shadow-2xl text-center flex flex-col items-center">
+              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center mb-6">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" className="sm:w-8 sm:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Link Expired</h2>
+              <p className="text-gray-400 text-xs sm:text-sm mb-8 leading-relaxed">
+                The link you clicked is no longer valid. Magic links expire after a short period for security. Please request a new one.
+              </p>
+              <div className="flex gap-3 w-full">
+                <button 
+                  onClick={() => setExpiredLinkMessage("")} 
+                  className="flex-1 py-3 rounded-xl bg-[#21262d] text-gray-300 font-bold hover:bg-[#30363d] active:scale-[0.98] transition-all cursor-pointer text-sm sm:text-base"
+                >
+                  Dismiss
+                </button>
+                <button 
+                  onClick={() => { 
+                    setExpiredLinkMessage(""); 
+                    setLandingView('form'); 
+                    setIsSignUp(false); 
+                    setIsMagicLinkMode(true); 
+                    setIsForgotPass(false); 
+                  }} 
+                  className="flex-1 py-3 rounded-xl bg-[#2563eb] text-white font-bold hover:bg-[#1d4ed8] active:scale-[0.98] transition-all cursor-pointer shadow-lg text-sm sm:text-base"
+                >
+                  Get New Link
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (isLoading || !selectedLaptop) {
     return (
       <div className="h-screen w-full bg-[#131314] flex flex-col items-center justify-center text-white">
@@ -618,12 +944,13 @@ export default function Home() {
     <div className="flex flex-col lg:flex-row h-screen bg-[#131314] text-gray-200 font-sans overflow-hidden relative">
       
       {/* ======================================================== 
-        📱 LEFT SIDE: PREVIEW BOX (Hidden on mobile unless opened)
+        📱 LEFT SIDE: PREVIEW BOX 
+        FIX: Removed lg:border-r border-[#2a2b2f] to remove the visible middle line
         ======================================================== 
       */}
       <div className={`
-        w-full lg:w-[50%] flex-col lg:border-r border-[#2a2b2f] px-3 sm:px-6 py-4 lg:px-10 lg:py-8 custom-scrollbar overflow-y-auto shrink-0 bg-[#131314]
-        ${isMobilePreviewOpen ? 'fixed inset-0 z-[150] flex animate-in fade-in zoom-in-95 duration-200' : 'hidden lg:flex relative'}
+        w-full lg:w-[50%] flex-col px-3 sm:px-6 py-4 lg:p-8 custom-scrollbar overflow-y-auto shrink-0 bg-[#131314]
+        ${isMobilePreviewOpen ? 'fixed inset-0 z-[150] flex animate-in fade-in zoom-in-95 duration-200 lg:relative lg:inset-auto lg:z-auto lg:animate-none' : 'hidden lg:flex relative'}
       `}>
         
         {/* MOBILE CLOSE BUTTON */}
@@ -634,15 +961,15 @@ export default function Home() {
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
 
-        <div className="max-w-2xl mx-auto w-full pb-10 mt-8 lg:mt-0">
+        <div className="max-w-2xl mx-auto w-full my-auto pb-4 mt-8 lg:mt-0 flex flex-col justify-center min-h-full">
           <h1 className="text-2xl lg:text-3xl font-bold mb-1 text-white tracking-tight hidden lg:block">Company Asset Sale</h1>
           <p className="text-gray-400 mb-6 text-sm hidden lg:block">Select a laptop from the grid to view details and place your bid.</p>
           
-          <div className="bg-[#1e1f20] p-3 sm:p-5 lg:p-6 rounded-2xl border border-[#2a2b2f] shadow-2xl">
+          <div className="bg-[#1e1f20] p-4 sm:p-5 lg:p-6 rounded-2xl border border-[#2a2b2f] shadow-2xl">
             
             {/* CAROUSEL HEADER */}
             <div 
-              className="relative w-full h-44 sm:h-56 lg:h-80 mb-4 lg:mb-6 rounded-xl overflow-hidden shadow-md group/carousel bg-black cursor-pointer"
+              className="relative w-full h-44 sm:h-56 lg:h-52 mb-4 lg:mb-5 rounded-xl overflow-hidden shadow-md group/carousel bg-black cursor-pointer"
               onClick={() => setIsLightboxOpen(true)}
             >
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md text-white text-[10px] font-bold uppercase tracking-widest px-4 py-2 rounded-full opacity-0 group-hover/carousel:opacity-100 transition-opacity pointer-events-none z-30 border border-white/20 shadow-xl hidden sm:block">
@@ -676,8 +1003,8 @@ export default function Home() {
               <div className="w-full lg:w-[55%] flex flex-col">
                 <h2 className="text-xl lg:text-2xl font-bold text-white leading-tight mb-1">{selectedLaptop.modelType}</h2>
                 <p className="text-gray-400 font-mono tracking-wider mb-2 lg:mb-4 text-xs sm:text-sm">S/N: <span className="text-gray-200">{selectedLaptop.serialNumber}</span></p>
-                <div className="mb-3 lg:mb-5"><span className={`text-[10px] sm:text-xs px-3 py-1.5 rounded font-medium border ${getDefectColor(selectedLaptop.defectType)}`}>{selectedLaptop.defectType}</span></div>
-                <p className="text-gray-400 text-xs sm:text-sm mb-4 lg:mb-6 leading-relaxed">{selectedLaptop.description}</p>
+                <div className="mb-3 lg:mb-4"><span className={`text-[10px] sm:text-xs px-3 py-1.5 rounded font-medium border ${getDefectColor(selectedLaptop.defectType)}`}>{selectedLaptop.defectType}</span></div>
+                <p className="text-gray-400 text-xs sm:text-sm mb-4 lg:mb-5 leading-relaxed">{selectedLaptop.description}</p>
                 <h3 className="text-[10px] sm:text-xs uppercase tracking-widest text-gray-500 font-bold mb-2 lg:mb-3">Hardware Specs</h3>
                 <div className="grid grid-cols-2 gap-2 lg:gap-3 text-xs sm:text-sm">
                   <div className="bg-[#131314] p-2.5 lg:p-3 rounded-lg border border-[#2a2b2f]"><span className="block text-gray-500 text-[9px] lg:text-[10px] uppercase mb-0.5">Processor</span><span className="text-gray-200 font-medium">{selectedLaptop.specs.cpu}</span></div>
@@ -688,26 +1015,25 @@ export default function Home() {
               </div>
 
               {/* COLUMN B: 3D Flip Card */}
-              {/* FIX: Shorter fixed height on mobile to prevent overlap */}
-              <div className="w-full lg:w-[45%] relative [perspective:1000px] h-[260px] sm:h-[300px] lg:h-[420px]">
+              <div className="w-full lg:w-[45%] relative [perspective:1000px] h-[260px] sm:h-[300px] lg:h-[340px]">
                 <div className={`w-full h-full transition-transform duration-700 [transform-style:preserve-3d] ${isFlipped ? '[transform:rotateY(180deg)]' : '[transform:rotateY(0deg)]'}`}>
                   
                   {/* FRONT FACE: Bids & Actions */}
                   <div className="absolute inset-0 [backface-visibility:hidden] flex flex-col justify-between bg-[#131314] p-4 lg:p-6 rounded-xl border border-[#2a2b2f]">
                     <div>
-                      <div className="flex items-center gap-1.5 bg-[#2a2b2f] px-3 py-1.5 rounded-md text-xs sm:text-sm text-gray-300 w-fit mb-2 lg:mb-8 border border-[#3a3b3f]">
+                      <div className="flex items-center gap-1.5 bg-[#2a2b2f] px-3 py-1.5 rounded-md text-xs sm:text-sm text-gray-300 w-fit mb-2 lg:mb-4 border border-[#3a3b3f]">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                         <span className="font-semibold">{selectedLaptop.bidsCount} Active Bids</span>
                       </div>
                       <p className="text-gray-500 text-[10px] sm:text-[11px] uppercase tracking-wider font-bold mb-1 lg:mb-2">Current Highest Bid</p>
-                      <p className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-0 lg:mb-8">₱{selectedLaptop.currentBid.toLocaleString()}</p>
+                      <p className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-0 lg:mb-4">₱{selectedLaptop.currentBid.toLocaleString()}</p>
                     </div>
                     
-                    <div className="flex flex-col gap-2 lg:gap-3">
+                    <div className="flex flex-col gap-2 lg:gap-3 mt-auto">
                       {activeUserBid ? (
                         <button 
                           onClick={() => setBidToCancel({ bidId: activeUserBid.id, laptopId: selectedLaptop.id })} 
-                          className="w-full py-3.5 rounded-xl bg-red-500/10 text-red-500 font-bold text-sm lg:text-base border border-red-500/20 hover:bg-red-500 hover:text-white active:scale-[0.98] transition-all duration-200 flex items-center justify-center cursor-pointer whitespace-nowrap px-2"
+                          className="w-full py-3 rounded-xl bg-red-500/10 text-red-500 font-bold text-sm lg:text-base border border-red-500/20 hover:bg-red-500 hover:text-white active:scale-[0.98] transition-all duration-200 flex items-center justify-center cursor-pointer whitespace-nowrap px-2"
                         >
                           Cancel Bid (₱{activeUserBid.myBid.toLocaleString()})
                         </button>
@@ -717,7 +1043,7 @@ export default function Home() {
                             if (!user) setIsLoginRequiredOpen(true);
                             else setIsBidModalOpen(true);
                           }} 
-                          className="w-full py-3.5 lg:py-4 rounded-xl bg-gray-100 text-black font-bold text-base lg:text-lg hover:bg-gray-300 active:scale-[0.98] transition-all duration-200 cursor-pointer"
+                          className="w-full py-3 lg:py-4 rounded-xl bg-gray-100 text-black font-bold text-base lg:text-lg hover:bg-gray-300 active:scale-[0.98] transition-all duration-200 cursor-pointer"
                         >
                           Place Bid
                         </button>
@@ -807,7 +1133,13 @@ export default function Home() {
               myBidsCount={myBids.length}
               onLoginClick={openLogin} 
               onMyBidsClick={() => setIsMyBidsOpen(true)} 
-              onLogOutClick={async () => { await supabase.auth.signOut(); }}
+              onLogOutClick={async () => { 
+                await supabase.auth.signOut(); 
+                setLandingView('hero'); 
+                setLandingAuthError(""); 
+                setIsMagicLinkSent(false); 
+                setIsMagicLinkMode(false);
+              }}
             />
           </div>
         </div>
@@ -827,7 +1159,9 @@ export default function Home() {
                 isSelected={selectedLaptop?.id === laptop.id}
                 onClick={() => {
                   setSelectedLaptop(laptop);
-                  setIsMobilePreviewOpen(true);
+                  if (window.innerWidth < 1024) {
+                    setIsMobilePreviewOpen(true);
+                  }
                 }}
                 
                 isCompared={compareIds.includes(laptop.id)}
@@ -1059,6 +1393,18 @@ export default function Home() {
             </h2>
             
             <div className="space-y-4">
+              {isSignUp && !isForgotPass && (
+                <div>
+                  <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Full Name</label>
+                  <input 
+                    type="text" 
+                    placeholder="Juan Dela Cruz" 
+                    value={authFullName}
+                    onChange={(e) => setAuthFullName(e.target.value)}
+                    className="w-full bg-[#131314] border border-[#2a2b2f] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-gray-500 outline-none text-sm transition" 
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Email Address</label>
                 <input 
@@ -1329,8 +1675,9 @@ export default function Home() {
                         setSelectedLaptop(bid.laptop); 
                         setIsMyBidsOpen(false); 
                         setActiveCartItem(null); 
-                        // NEW: Open modal if on mobile!
-                        setIsMobilePreviewOpen(true);
+                        if (window.innerWidth < 1024) {
+                          setIsMobilePreviewOpen(true);
+                        }
                       }}
                       className="px-5 py-2.5 bg-gray-200 text-black hover:bg-white text-sm font-bold rounded-xl transition-all shadow-2xl hover:scale-105 active:scale-95 cursor-pointer"
                     >
@@ -1389,7 +1736,9 @@ export default function Home() {
                           setBidForm(prev => ({...prev, amount: String(bid.recommended)}));
                           setIsMyBidsOpen(false);
                           setActiveCartItem(null);
-                          setIsMobilePreviewOpen(true);
+                          if (window.innerWidth < 1024) {
+                            setIsMobilePreviewOpen(true);
+                          }
                           setIsBidModalOpen(true);
                         }}
                         className="text-[9px] sm:text-[10px] bg-blue-600 hover:bg-blue-500 text-white uppercase font-bold tracking-wider px-3 py-1.5 rounded transition-colors shadow-md cursor-pointer"

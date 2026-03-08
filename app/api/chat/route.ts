@@ -20,12 +20,17 @@ export async function POST(request: Request) {
     You also have access to the full inventory context here:
     ${inventory}
 
+    DEFECT SEVERITY RUBRIC (Use this to evaluate):
+    - "Aesthetic Damage": BEST option. Purely cosmetic.
+    - "Hardware Malfunction": MODERATE. Broken keys/ports require external workarounds.
+    - "Performance Issues": WORST option. Do not recommend for heavy workflows (video editing/gaming) regardless of specs.
+
     CRITICAL INSTRUCTIONS:
-    1. BE RATIONAL, BOLD, YET WARM: Give a definitive, honest opinion immediately, but explain your reasoning respectfully. Balance directness with a friendly tone. 
-    2. CONCISE & REASONED: Maximum 3 to 4 short sentences total. Briefly weigh the pros and cons.
-    3. NO MARKDOWN FORMATTING: Do NOT use asterisks, hashtags, or bullet points. Use plain text only.
-    4. NO REPEATING SPECS: Do not list the specs. The user can see them. Focus strictly on the 'why' and your recommendation.
-    5. Make smart, opinionated comparisons against the rest of the inventory if relevant.`;
+    1. BE RATIONAL, BOLD, YET WARM: Give a definitive, honest opinion immediately.
+    2. MANDATORY VERDICT: Tell them explicitly if this is a good buy or if they should skip it. 
+    3. CONCISE: Maximum 3 to 4 short sentences total.
+    4. NO MARKDOWN: Do NOT use asterisks, hashtags, or bullet points. Use plain text only.
+    5. NO REPEATING SPECS: Do not list the specs. Focus strictly on the 'why' and your recommendation against the rest of the inventory.`;
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
