@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { LaptopCard } from "../components/LaptopCard";
 import { supabase } from "../lib/supabase"; // THE BRIDGE TO YOUR DATABASE
 
@@ -148,8 +149,10 @@ function FilterSortDropdown({ activeFilters, onApply }: any) {
 function ProfileDropdown({ user, myBidsCount, onLoginClick, onMyBidsClick, onLogOutClick }: any) {
   const [isOpen, setIsOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
   
-  const isLoggedIn = !!user; 
+  const isLoggedIn = !!user;
+  const isAdmin = isLoggedIn && user.email === "niel.garcia@volenday.com";
 
   useEffect(() => {
     if (!isOpen) return;
@@ -194,6 +197,17 @@ function ProfileDropdown({ user, myBidsCount, onLoginClick, onMyBidsClick, onLog
               {myBidsCount > 0 && <span className="ml-auto bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{myBidsCount}</span>}
             </button>
           </li>
+          {isAdmin && (
+            <li>
+              <button 
+                onClick={() => { router.push('/admin'); setIsOpen(false); }}
+                className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-gray-300 hover:bg-[#2a2b2f] transition"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                Admin Console
+              </button>
+            </li>
+          )}
           <li>
             <button 
               onClick={() => { 
