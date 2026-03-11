@@ -271,6 +271,9 @@ export default function Home() {
   const [bidToCancel, setBidToCancel] = useState<{bidId: number, laptopId: number} | null>(null);
   const [isCanceling, setIsCanceling] = useState(false);
 
+  // Stale bid alert modal
+  const [isStaleBidAlertOpen, setIsStaleBidAlertOpen] = useState(false);
+
   // Compare Logic State
   const [compareIds, setCompareIds] = useState<number[]>([]);
 
@@ -355,6 +358,27 @@ export default function Home() {
   };
 
   useEffect(() => { if (user) fetchLaptops(); }, [user]);
+
+  // Supabase Realtime: listen for UPDATE events on the laptops table
+  useEffect(() => {
+    const channel = supabase
+      .channel('laptops-realtime')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'laptops' }, (payload) => {
+        const updated = payload.new as any;
+        const formatted = {
+          id: updated.id, modelType: updated.model_type, serialNumber: updated.serial_number,
+          images: updated.images, description: updated.description, defectType: updated.defect_type,
+          specs: updated.specs, currentBid: updated.current_bid, bidsCount: updated.bids_count, viewsCount: updated.views_count,
+        };
+        setLaptops((prev) => prev.map((l) => (l.id === formatted.id ? { ...l, ...formatted } : l)));
+        setSelectedLaptop((prev: any) => (prev && prev.id === formatted.id ? { ...prev, ...formatted } : prev));
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'laptops' }, () => { fetchLaptops(); })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'laptops' }, () => { fetchLaptops(); })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   const fetchMyBids = async () => {
     if (!user) return setMyBids([]);
@@ -472,6 +496,26 @@ export default function Home() {
     try {
       const bidAmount = Number(bidForm.amount);
 
+      // Atomic check: fetch the live current_bid from the database to prevent race conditions
+      const { data: liveData, error: liveError } = await supabase
+        .from('laptops')
+        .select('current_bid')
+        .eq('id', selectedLaptop.id)
+        .single();
+
+      if (liveError) throw liveError;
+
+      if (liveData && liveData.current_bid >= bidAmount) {
+        // Refresh local state with the live data so the user sees the updated price
+        const liveBid = liveData.current_bid;
+        setSelectedLaptop((prev: any) => ({ ...prev, currentBid: liveBid }));
+        setLaptops((prev) => prev.map(l => l.id === selectedLaptop.id ? { ...l, currentBid: liveBid } : l));
+        setBidForm(prev => ({ ...prev, amount: String(liveBid + 100) }));
+        setIsBidModalOpen(false);
+        setIsStaleBidAlertOpen(true);
+        return;
+      }
+
       let previousBidderEmail = null;
       if (selectedLaptop.bidsCount > 0) {
         const { data: prevBidData } = await supabase
@@ -487,7 +531,6 @@ export default function Home() {
         }
       }
 
-      // FIX: Securely delete any existing bid this user has on this laptop BEFORE inserting to prevent duplicate history
       await supabase.from('bids').delete().eq('laptop_id', selectedLaptop.id).eq('user_id', user.id);
 
       const { error: bidError } = await supabase.from('bids').insert({
@@ -502,7 +545,6 @@ export default function Home() {
       });
       if (bidError) throw bidError;
 
-      // FIX: Calculate the exact new count dynamically so it perfectly syncs with the database
       const { count } = await supabase.from('bids').select('*', { count: 'exact', head: true }).eq('laptop_id', selectedLaptop.id);
       const newBidsCount = count || 0;
 
@@ -1594,6 +1636,27 @@ export default function Home() {
                 {isSubmittingBid ? "Submitting..." : "Confirm & Place Bid"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* STALE BID ALERT MODAL */}
+      {isStaleBidAlertOpen && (
+        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-2xl w-full max-w-sm p-6 sm:p-8 shadow-2xl text-center flex flex-col items-center">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center mb-6">
+              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" className="sm:w-8 sm:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Bid Outdated</h2>
+            <p className="text-gray-400 text-xs sm:text-sm mb-8 leading-relaxed">
+              Bid Amount changed, please see the updated details and try again.
+            </p>
+            <button 
+              onClick={() => setIsStaleBidAlertOpen(false)} 
+              className="w-full py-3.5 rounded-xl bg-[#2a2b2f] text-gray-200 font-bold hover:bg-[#3a3b3f] active:scale-[0.98] transition-all duration-200 cursor-pointer"
+            >
+              Got it
+            </button>
           </div>
         </div>
       )}

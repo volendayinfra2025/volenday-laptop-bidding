@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const ADMIN_EMAIL = "niel.garcia@volenday.com";
 
@@ -25,6 +26,8 @@ function getDefectColor(type: string) {
   if (type === "Hardware Malfunction") return "text-purple-300 bg-purple-500/10 border-purple-500/20";
   return "text-gray-300 bg-gray-500/10 border-gray-500/20";
 }
+
+const PIE_COLORS = ["#3b82f6", "#f59e0b", "#a855f7", "#6b7280"];
 
 // ─── Filter Dropdown (reused from main page) ──────────────────────────────────
 
@@ -85,6 +88,136 @@ function AdminFilterDropdown({ activeFilters, onApply, modelOptions }: any) {
   );
 }
 
+// ─── Dashboard Tab ───────────────────────────────────────────────────────────
+
+function DashboardView({ assets, bids }: { assets: any[]; bids: any[] }) {
+  const totalLaptops = assets.length;
+  const totalActiveBids = bids.length;
+  const totalProjectedRevenue = assets.reduce((sum, a) => sum + Number(a.current_bid || 0), 0);
+
+  const mostViewedUnit = assets.length > 0
+    ? assets.reduce((top, a) => (a.views_count > (top.views_count || 0) ? a : top), assets[0])
+    : null;
+
+  const highestBidUnit = assets.length > 0
+    ? assets.reduce((top, a) => (Number(a.current_bid) > Number(top.current_bid) ? a : top), assets[0])
+    : null;
+
+  const defectCounts: Record<string, number> = {};
+  assets.forEach((a) => {
+    const key = a.defect_type || "Unknown";
+    defectCounts[key] = (defectCounts[key] || 0) + 1;
+  });
+  const pieData = Object.entries(defectCounts).map(([name, value]) => ({ name, value }));
+
+  const top5Viewed = [...assets]
+    .sort((a, b) => (b.views_count || 0) - (a.views_count || 0))
+    .slice(0, 5)
+    .map((a) => ({ name: a.model_type?.length > 18 ? a.model_type.slice(0, 18) + "…" : a.model_type, views: a.views_count || 0 }));
+
+  const kpis = [
+    { label: "Total Laptops for Sale", value: totalLaptops, icon: (<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="2" y1="20" x2="22" y2="20"/></svg>), color: "text-blue-400" },
+    { label: "Total Active Bids", value: totalActiveBids, icon: (<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>), color: "text-emerald-400" },
+    { label: "Total Projected Revenue", value: `₱${totalProjectedRevenue.toLocaleString()}`, icon: (<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>), color: "text-amber-400" },
+    { label: "Most Viewed Unit", value: mostViewedUnit ? mostViewedUnit.model_type : "—", sub: mostViewedUnit ? `${mostViewedUnit.views_count || 0} views` : "", icon: (<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>), color: "text-purple-400" },
+    { label: "Highest Bid Unit", value: highestBidUnit ? highestBidUnit.model_type : "—", sub: highestBidUnit ? `₱${Number(highestBidUnit.current_bid).toLocaleString()}` : "", icon: (<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>), color: "text-yellow-400" },
+  ];
+
+  const CustomTooltipPie = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-lg px-3 py-2 text-xs shadow-xl">
+          <p className="text-white font-semibold">{payload[0].name}</p>
+          <p className="text-gray-400">{payload[0].value} unit{payload[0].value !== 1 ? "s" : ""}</p>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const CustomTooltipBar = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-lg px-3 py-2 text-xs shadow-xl">
+          <p className="text-white font-semibold">{label}</p>
+          <p className="text-gray-400">{payload[0].value} views</p>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+        {kpis.map((kpi) => (
+          <div key={kpi.label} className="bg-[#1e1f20] border border-[#2a2b2f] rounded-xl p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-widest text-gray-500 font-bold leading-tight">{kpi.label}</span>
+              <span className={kpi.color}>{kpi.icon}</span>
+            </div>
+            <div>
+              <span className="text-xl font-bold text-white leading-none truncate block">{kpi.value}</span>
+              {kpi.sub && <span className="text-xs text-gray-500 mt-0.5 block">{kpi.sub}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Pie: Defect Types */}
+        <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-xl p-5">
+          <h3 className="text-sm font-bold text-white mb-4">Defect Type Breakdown</h3>
+          {pieData.length === 0 ? (
+            <p className="text-xs text-gray-500 py-10 text-center">No data available</p>
+          ) : (
+            <div className="flex items-center gap-4">
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3} dataKey="value" stroke="none">
+                    {pieData.map((_, i) => (
+                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<CustomTooltipPie />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex flex-col gap-2 min-w-[130px]">
+                {pieData.map((d, i) => (
+                  <div key={d.name} className="flex items-center gap-2 text-xs">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }} />
+                    <span className="text-gray-300 truncate">{d.name}</span>
+                    <span className="text-gray-500 ml-auto">{d.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Bar: Top 5 Most Viewed */}
+        <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-xl p-5">
+          <h3 className="text-sm font-bold text-white mb-4">Top 5 Most Viewed Laptops</h3>
+          {top5Viewed.length === 0 ? (
+            <p className="text-xs text-gray-500 py-10 text-center">No data available</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={top5Viewed} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                <XAxis type="number" tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" tick={{ fill: "#d1d5db", fontSize: 11 }} axisLine={false} tickLine={false} width={120} />
+                <Tooltip content={<CustomTooltipBar />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
+                <Bar dataKey="views" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Admin Page ───────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
@@ -97,6 +230,7 @@ export default function AdminPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   const [activeFilters, setActiveFilters] = useState({ models: [] as string[], defects: [] as string[] });
+  const [activeTab, setActiveTab] = useState<"dashboard" | "items">("dashboard");
 
   // Context menu
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
@@ -278,113 +412,156 @@ export default function AdminPage() {
   // ─── Main Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-[#101112] text-white">
+    <div className="min-h-screen bg-[#101112] text-white flex">
 
-      {/* ══ HEADER ══ */}
-      <header className="sticky top-0 z-50 bg-[#101112]/90 backdrop-blur-xl border-b border-[#2a2b2f]/50 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button onClick={() => router.push("/")} className="w-9 h-9 rounded-lg bg-[#1e1f20] border border-[#2a2b2f] flex items-center justify-center hover:bg-[#2a2b2f] transition" title="Back to Home">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5"></path><polyline points="12 19 5 12 12 5"></polyline></svg>
-            </button>
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-lg border border-blue-400/20">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-            </div>
-            <h1 className="text-lg sm:text-xl font-bold">Admin Console</h1>
+      {/* ══ LEFT SIDEBAR ══ */}
+      <aside className="w-16 sm:w-56 shrink-0 bg-[#131314] border-r border-[#2a2b2f] flex flex-col sticky top-0 h-screen z-40">
+        {/* Logo area */}
+        <div className="flex items-center gap-3 px-3 sm:px-5 py-5 border-b border-[#2a2b2f]">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-lg border border-blue-400/20 shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
           </div>
-          <div className="flex items-center gap-3">
-            <AdminFilterDropdown activeFilters={activeFilters} onApply={setActiveFilters} modelOptions={modelOptions} />
-            <button onClick={() => { setAddForm(emptyForm); setIsAddModalOpen(true); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition shadow-lg shadow-blue-600/20">
-              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-              <span className="hidden sm:inline">Add New Asset</span>
-              <span className="sm:hidden">Add</span>
-            </button>
-          </div>
+          <span className="hidden sm:block text-sm font-bold text-white">Admin Console</span>
         </div>
-      </header>
 
-      {/* ══ ASSET LIST ══ */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        {isLoading ? (
-          <div className="flex justify-center py-20">
-            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : processed.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-500">
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="mb-4 opacity-40"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
-            <p className="text-sm">No assets found.</p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {processed.map((asset) => {
-              const topBid = getHighestBid(asset.id);
-              return (
-                <div key={asset.id} className="relative bg-[#1e1f20] border border-[#2a2b2f] rounded-xl p-4 flex items-center gap-4 hover:border-[#3a3b3f] transition group">
+        {/* Nav */}
+        <nav className="flex flex-col gap-1 p-2 sm:p-3 mt-2">
+          <button
+            onClick={() => setActiveTab("dashboard")}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${activeTab === "dashboard" ? "bg-[#1e1f20] text-white" : "text-gray-500 hover:text-gray-300 hover:bg-[#1e1f20]/50"}`}
+          >
+            {/* Dashboard icon */}
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            <span className="hidden sm:block">Dashboard</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("items")}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${activeTab === "items" ? "bg-[#1e1f20] text-white" : "text-gray-500 hover:text-gray-300 hover:bg-[#1e1f20]/50"}`}
+          >
+            {/* Scroll / list icon */}
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg>
+            <span className="hidden sm:block">Item List</span>
+          </button>
+        </nav>
 
-                  {/* Thumbnail */}
-                  <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg bg-[#131314] border border-[#2a2b2f] overflow-hidden shrink-0">
-                    {asset.images && asset.images.length > 0 ? (
-                      <img src={asset.images[0]} alt={asset.model_type} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-600">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+        {/* Bottom: back to home */}
+        <div className="mt-auto p-2 sm:p-3 border-t border-[#2a2b2f]">
+          <button onClick={() => router.push("/")} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-500 hover:text-gray-300 hover:bg-[#1e1f20]/50 transition w-full font-medium">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+            <span className="hidden sm:block">Back to Home</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* ══ MAIN CONTENT ══ */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* ══ HEADER ══ */}
+        <header className="sticky top-0 z-30 bg-[#101112]/90 backdrop-blur-xl border-b border-[#2a2b2f]/50 shadow-sm">
+          <div className="px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+            <h1 className="text-lg sm:text-xl font-bold truncate">
+              {activeTab === "dashboard" ? "Dashboard" : "Item List"}
+            </h1>
+            {activeTab === "items" && (
+              <div className="flex items-center gap-3">
+                <AdminFilterDropdown activeFilters={activeFilters} onApply={setActiveFilters} modelOptions={modelOptions} />
+                <button onClick={() => { setAddForm(emptyForm); setIsAddModalOpen(true); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition shadow-lg shadow-blue-600/20">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                  <span className="hidden sm:inline">Add New Asset</span>
+                  <span className="sm:hidden">Add</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </header>
+
+        {/* ══ PAGE CONTENT ══ */}
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 overflow-y-auto">
+          {isLoading ? (
+            <div className="flex justify-center py-20">
+              <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : activeTab === "dashboard" ? (
+            <DashboardView assets={assets} bids={bids} />
+          ) : (
+            /* ══ ITEM LIST TAB ══ */
+            processed.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="mb-4 opacity-40"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+                <p className="text-sm">No assets found.</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {processed.map((asset) => {
+                  const topBid = getHighestBid(asset.id);
+                  return (
+                    <div key={asset.id} className="relative bg-[#1e1f20] border border-[#2a2b2f] rounded-xl p-4 flex items-center gap-4 hover:border-[#3a3b3f] transition group">
+
+                      {/* Thumbnail */}
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg bg-[#131314] border border-[#2a2b2f] overflow-hidden shrink-0">
+                        {asset.images && asset.images.length > 0 ? (
+                          <img src={asset.images[0]} alt={asset.model_type} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-gray-600">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
 
-                  {/* Model + Serial */}
-                  <div className="flex flex-col min-w-0 flex-1">
-                    <span className="text-sm sm:text-base font-bold text-white truncate">{asset.model_type}</span>
-                    <span className="text-xs text-gray-500 truncate mt-0.5">{asset.serial_number}</span>
-                  </div>
-
-                  {/* Defect Tag */}
-                  <div className="hidden md:flex items-center shrink-0">
-                    <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${getDefectColor(asset.defect_type)}`}>
-                      {asset.defect_type}
-                    </span>
-                  </div>
-
-                  {/* Bid Info */}
-                  <div className="hidden sm:flex flex-col items-end text-right min-w-[180px] shrink-0 pr-8">
-                    {topBid ? (
-                      <>
-                        <span className="text-xs text-gray-400">Latest Bidder: <span className="text-gray-200 font-medium">{topBid.full_name}</span></span>
-                        <span className="text-sm font-bold text-green-400 mt-0.5">₱{Number(topBid.amount).toLocaleString()}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="text-xs text-gray-500">No bids yet</span>
-                        <span className="text-sm font-bold text-gray-300 mt-0.5">Starting at ₱{Number(asset.current_bid).toLocaleString()}</span>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Context Menu Trigger */}
-                  <div className="absolute top-2.5 right-2.5">
-                    <button onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === asset.id ? null : asset.id); }} className="w-7 h-7 rounded-md flex items-center justify-center text-red-400 hover:bg-red-500/10 transition">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
-                    </button>
-
-                    {menuOpenId === asset.id && (
-                      <div ref={menuRef} className="absolute right-0 mt-1 w-44 bg-[#1e1f20] border border-[#28282c] shadow-2xl rounded-xl py-1.5 z-50 text-sm">
-                        <button onClick={() => { setEditBidAsset(asset); setEditBidAmount(String(asset.current_bid)); setMenuOpenId(null); }} className="w-full text-left px-4 py-2.5 text-gray-300 hover:bg-[#2a2b2f] transition flex items-center gap-2">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-                          Edit Bid Amount
-                        </button>
-                        <button onClick={() => { setDeleteAsset(asset); setMenuOpenId(null); }} className="w-full text-left px-4 py-2.5 text-red-400 hover:bg-red-500/10 transition flex items-center gap-2">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                          Delete Listing
-                        </button>
+                      {/* Model + Serial */}
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className="text-sm sm:text-base font-bold text-white truncate">{asset.model_type}</span>
+                        <span className="text-xs text-gray-500 truncate mt-0.5">{asset.serial_number}</span>
                       </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </main>
+
+                      {/* Defect Tag */}
+                      <div className="hidden md:flex items-center shrink-0">
+                        <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${getDefectColor(asset.defect_type)}`}>
+                          {asset.defect_type}
+                        </span>
+                      </div>
+
+                      {/* Bid Info */}
+                      <div className="hidden sm:flex flex-col items-end text-right min-w-[180px] shrink-0 pr-8">
+                        {topBid ? (
+                          <>
+                            <span className="text-xs text-gray-400">Latest Bidder: <span className="text-gray-200 font-medium">{topBid.full_name}</span></span>
+                            <span className="text-sm font-bold text-green-400 mt-0.5">₱{Number(topBid.amount).toLocaleString()}</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-xs text-gray-500">No bids yet</span>
+                            <span className="text-sm font-bold text-gray-300 mt-0.5">Starting at ₱{Number(asset.current_bid).toLocaleString()}</span>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Context Menu Trigger */}
+                      <div className="absolute top-2.5 right-2.5">
+                        <button onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === asset.id ? null : asset.id); }} className="w-7 h-7 rounded-md flex items-center justify-center text-red-400 hover:bg-red-500/10 transition">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                        </button>
+
+                        {menuOpenId === asset.id && (
+                          <div ref={menuRef} className="absolute right-0 mt-1 w-44 bg-[#1e1f20] border border-[#28282c] shadow-2xl rounded-xl py-1.5 z-50 text-sm">
+                            <button onClick={() => { setEditBidAsset(asset); setEditBidAmount(String(asset.current_bid)); setMenuOpenId(null); }} className="w-full text-left px-4 py-2.5 text-gray-300 hover:bg-[#2a2b2f] transition flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                              Edit Bid Amount
+                            </button>
+                            <button onClick={() => { setDeleteAsset(asset); setMenuOpenId(null); }} className="w-full text-left px-4 py-2.5 text-red-400 hover:bg-red-500/10 transition flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                              Delete Listing
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          )}
+        </main>
+      </div>
 
       {/* ══ DELETE CONFIRMATION MODAL ══ */}
       {deleteAsset && (
