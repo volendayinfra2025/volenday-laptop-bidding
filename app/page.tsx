@@ -297,8 +297,13 @@ export default function Home() {
   // ---------------- DATA FETCHING ----------------
   
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        supabase.auth.signOut();
+        setUser(null);
+      } else {
+        setUser(session?.user ?? null);
+      }
       setIsAuthChecking(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null));
@@ -608,7 +613,7 @@ export default function Home() {
                   Affordable laptops at your fingertips
                 </h1>
                 <p className="text-gray-400 text-sm sm:text-[15px] mb-10 leading-relaxed">
-                  Internal company asset auction. Sign in with your Volenday email to browse and bid.
+                  Sign in with your @volenday.com email to start bidding now!
                 </p>
                 <div className="flex flex-col gap-3 w-full max-w-xs mx-auto lg:mx-0">
                   <button 

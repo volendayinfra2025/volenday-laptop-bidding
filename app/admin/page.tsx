@@ -258,7 +258,12 @@ export default function AdminPage() {
   // ─── Auth Guard ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        supabase.auth.signOut();
+        router.push("/");
+        return;
+      }
       const currentUser = session?.user ?? null;
       if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email ?? '')) {
         router.push("/");
