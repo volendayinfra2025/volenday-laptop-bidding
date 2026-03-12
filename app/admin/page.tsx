@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
-const ADMIN_EMAIL = "niel.garcia@volenday.com";
+const ADMIN_EMAILS = ['niel.garcia@volenday.com', 'patrick.manicad@volenday.com', 'brent.bueno@volenday.com'];
+
+const formatNameFromEmail = (email: string) => {
+  const local = email.split('@')[0];
+  return local.split('.').map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(' ');
+};
 
 const ASSET_TYPES = [
   { label: "Laptop", value: "Laptop" },
@@ -238,11 +243,12 @@ export default function AdminPage() {
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [editBidAsset, setEditBidAsset] = useState<any>(null);
+  const [editAsset, setEditAsset] = useState<any>(null);
   const [deleteAsset, setDeleteAsset] = useState<any>(null);
 
-  // Edit bid form
-  const [editBidAmount, setEditBidAmount] = useState("");
+  // Edit asset form
+  const emptyEditForm = { modelName: "", serialNumber: "", defectType: "Aesthetic Damage", imageUrl: "", currentBid: "", cpu: "", ram: "", storage: "", os: "" };
+  const [editForm, setEditForm] = useState(emptyEditForm);
 
   // Add asset form
   const emptyForm = { assetType: "Laptop", modelName: "", serialNumber: "", defectType: "Aesthetic Damage", imageUrl: "", startingBid: "", cpu: "", ram: "", storage: "", os: "" };
@@ -254,7 +260,7 @@ export default function AdminPage() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       const currentUser = session?.user ?? null;
-      if (!currentUser || currentUser.email !== ADMIN_EMAIL) {
+      if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email ?? '')) {
         router.push("/");
         return;
       }
@@ -265,8 +271,8 @@ export default function AdminPage() {
 
   // ─── Data Fetching ──────────────────────────────────────────────────────────
 
-  const fetchData = async () => {
-    setIsLoading(true);
+  const fetchData = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     const [laptopRes, bidRes] = await Promise.all([
       supabase.from("laptops").select("*").order("id", { ascending: true }),
       supabase.from("bids").select("*").order("amount", { ascending: false }),
@@ -274,7 +280,7 @@ export default function AdminPage() {
 
     if (laptopRes.data) setAssets(laptopRes.data);
     if (bidRes.data) setBids(bidRes.data);
-    setIsLoading(false);
+    if (!silent) setIsLoading(false);
   };
 
   useEffect(() => { if (authChecked) fetchData(); }, [authChecked]);
@@ -328,30 +334,100 @@ export default function AdminPage() {
     fetchData();
   };
 
-  // ─── Edit Bid Handler ─────────────────────────────────────────────────────────
+  // ─── Edit Asset Handler ──────────────────────────────────────────────────────
 
-  const handleEditBid = async () => {
-    if (!editBidAsset || !editBidAmount) return;
-    const newAmount = Number(editBidAmount);
+  const openEditAsset = (asset: any) => {
+    setEditForm({
+      modelName: asset.model_type || "",
+      serialNumber: asset.serial_number || "",
+      defectType: asset.defect_type || "Aesthetic Damage",
+      imageUrl: asset.images?.[0] || "",
+      currentBid: String(asset.current_bid || ""),
+      cpu: asset.specs?.cpu || "",
+      ram: asset.specs?.ram || "",
+      storage: asset.specs?.storage || "",
+      os: asset.specs?.os || "",
+    });
+    setEditAsset(asset);
+  };
 
-    const topBid = getHighestBid(editBidAsset.id);
-    if (topBid && newAmount > topBid.amount && topBid.email) {
-      fetch("/api/admin/email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "outbid",
-          emails: [topBid.email],
-          laptopModel: editBidAsset.model_type,
-          newBidAmount: newAmount,
-        }),
-      }).catch(err => console.error("Failed to send outbid email", err));
+  const handleEditAsset = async () => {
+    if (!editAsset) return;
+    setIsSubmitting(true);
+
+    try {
+      const newAmount = Number(editForm.currentBid);
+      const topBid = getHighestBid(editAsset.id);
+      const highestBidAmount = topBid ? Number(topBid.amount) : 0;
+
+      const specs = { cpu: editForm.cpu, ram: editForm.ram, storage: editForm.storage, os: editForm.os };
+      const fallbackImage = `https://api.dicebear.com/7.x/icons/svg?seed=${encodeURIComponent(editForm.modelName)}&icon=laptop&backgroundColor=131314`;
+      const imageList = editForm.imageUrl ? [editForm.imageUrl] : [fallbackImage];
+
+      if (topBid && newAmount < highestBidAmount) {
+        const assetBids = bids.filter(b => b.laptop_id === editAsset.id);
+        const bidderEmails = [...new Set(assetBids.map(b => b.email).filter(Boolean))] as string[];
+
+        await supabase.from("bids").delete().eq("laptop_id", editAsset.id);
+
+        const { error } = await supabase.from("laptops").update({
+          model_type: editForm.modelName,
+          serial_number: editForm.serialNumber,
+          defect_type: editForm.defectType,
+          images: imageList,
+          specs,
+          current_bid: newAmount,
+          bids_count: 0,
+        }).eq("id", editAsset.id);
+
+        if (error) throw error;
+
+        if (bidderEmails.length > 0) {
+          fetch("/api/admin/email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "bid_reset",
+              emails: bidderEmails,
+              laptopModel: editForm.modelName,
+              newBidAmount: newAmount,
+            }),
+          }).catch(err => console.error("Failed to send bid reset emails", err));
+        }
+
+      } else {
+        if (topBid && newAmount > highestBidAmount && topBid.email) {
+          fetch("/api/admin/email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "outbid",
+              emails: [topBid.email],
+              laptopModel: editForm.modelName,
+              newBidAmount: newAmount,
+            }),
+          }).catch(err => console.error("Failed to send outbid email", err));
+        }
+
+        const { error } = await supabase.from("laptops").update({
+          model_type: editForm.modelName,
+          serial_number: editForm.serialNumber,
+          defect_type: editForm.defectType,
+          images: imageList,
+          specs,
+          current_bid: newAmount,
+        }).eq("id", editAsset.id);
+
+        if (error) throw error;
+      }
+
+      setEditAsset(null);
+      await fetchData(true);
+    } catch (err) {
+      console.error("Edit asset error:", err);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    await supabase.from("laptops").update({ current_bid: newAmount }).eq("id", editBidAsset.id);
-    setEditBidAsset(null);
-    setEditBidAmount("");
-    fetchData();
   };
 
   // ─── Add Asset Handler ────────────────────────────────────────────────────────
@@ -524,7 +600,7 @@ export default function AdminPage() {
                       <div className="hidden sm:flex flex-col items-end text-right min-w-[180px] shrink-0 pr-8">
                         {topBid ? (
                           <>
-                            <span className="text-xs text-gray-400">Latest Bidder: <span className="text-gray-200 font-medium">{topBid.full_name}</span></span>
+                            <span className="text-xs text-gray-400">Latest Bidder: <span className="text-gray-200 font-medium">{topBid.email ? formatNameFromEmail(topBid.email) : topBid.full_name}</span></span>
                             <span className="text-sm font-bold text-green-400 mt-0.5">₱{Number(topBid.amount).toLocaleString()}</span>
                           </>
                         ) : (
@@ -543,9 +619,9 @@ export default function AdminPage() {
 
                         {menuOpenId === asset.id && (
                           <div ref={menuRef} className="absolute right-0 mt-1 w-44 bg-[#1e1f20] border border-[#28282c] shadow-2xl rounded-xl py-1.5 z-50 text-sm">
-                            <button onClick={() => { setEditBidAsset(asset); setEditBidAmount(String(asset.current_bid)); setMenuOpenId(null); }} className="w-full text-left px-4 py-2.5 text-gray-300 hover:bg-[#2a2b2f] transition flex items-center gap-2">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-                              Edit Bid Amount
+                            <button onClick={() => { openEditAsset(asset); setMenuOpenId(null); }} className="w-full text-left px-4 py-2.5 text-gray-300 hover:bg-[#2a2b2f] transition flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                              Edit Asset
                             </button>
                             <button onClick={() => { setDeleteAsset(asset); setMenuOpenId(null); }} className="w-full text-left px-4 py-2.5 text-red-400 hover:bg-red-500/10 transition flex items-center gap-2">
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
@@ -588,17 +664,80 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* ══ EDIT BID AMOUNT MODAL ══ */}
-      {editBidAsset && (
-        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setEditBidAsset(null)}>
-          <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-white mb-1">Edit Bid Amount</h3>
-            <p className="text-xs text-gray-500 mb-5">{editBidAsset.model_type} — {editBidAsset.serial_number}</p>
-            <label className="block text-xs text-gray-400 mb-1.5 font-medium">New Current Bid (₱)</label>
-            <input type="number" step={100} value={editBidAmount} onChange={(e) => setEditBidAmount(e.target.value)} className="w-full bg-[#131314] border border-[#2a2b2f] text-white rounded-lg px-3 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition" placeholder="e.g. 3000" />
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => setEditBidAsset(null)} className="flex-1 py-2.5 rounded-lg bg-[#131314] text-gray-400 hover:text-white hover:bg-[#2a2b2f] transition text-sm font-semibold">Cancel</button>
-              <button onClick={handleEditBid} className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition text-sm font-semibold shadow-lg">Save</button>
+      {/* ══ EDIT ASSET MODAL ══ */}
+      {editAsset && (
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setEditAsset(null)}>
+          <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-2xl p-6 w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-white">Edit Asset</h3>
+              <button onClick={() => setEditAsset(null)} className="w-8 h-8 rounded-lg bg-[#131314] hover:bg-[#2a2b2f] flex items-center justify-center text-gray-400 hover:text-white transition">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5 font-medium">Model Name <span className="text-red-400">*</span></label>
+                <input type="text" value={editForm.modelName} onChange={(e) => setEditForm({ ...editForm, modelName: e.target.value })} className="w-full bg-[#131314] border border-[#2a2b2f] text-white rounded-lg px-3 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition" placeholder="e.g. Lenovo Thinkpad E480" />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5 font-medium">Serial Number <span className="text-red-400">*</span></label>
+                <input type="text" value={editForm.serialNumber} onChange={(e) => setEditForm({ ...editForm, serialNumber: e.target.value })} className="w-full bg-[#131314] border border-[#2a2b2f] text-white rounded-lg px-3 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition" placeholder="e.g. SN-2024-0001" />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5 font-medium">Defect Type <span className="text-red-400">*</span></label>
+                <div className="relative">
+                  <select value={editForm.defectType} onChange={(e) => setEditForm({ ...editForm, defectType: e.target.value })} className="w-full bg-[#131314] border border-[#2a2b2f] text-gray-200 rounded-lg px-3 py-3 pr-9 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition appearance-none cursor-pointer">
+                    {DEFECT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"><path d="M6 8l4 4 4-4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5 font-medium">Image URL <span className="text-gray-600 text-[10px] ml-1">(optional)</span></label>
+                <input type="text" value={editForm.imageUrl} onChange={(e) => setEditForm({ ...editForm, imageUrl: e.target.value })} className="w-full bg-[#131314] border border-[#2a2b2f] text-white rounded-lg px-3 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition" placeholder="https://example.com/image.jpg" />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5 font-medium">Current Bid Amount (₱) <span className="text-red-400">*</span></label>
+                <input type="number" step={100} value={editForm.currentBid} onChange={(e) => setEditForm({ ...editForm, currentBid: e.target.value })} className="w-full bg-[#131314] border border-[#2a2b2f] text-white rounded-lg px-3 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition" placeholder="e.g. 3000" />
+              </div>
+
+              <div className="pt-2 border-t border-[#2a2b2f]">
+                <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-3">Specifications</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1.5 font-medium">CPU</label>
+                    <input type="text" value={editForm.cpu} onChange={(e) => setEditForm({ ...editForm, cpu: e.target.value })} className="w-full bg-[#131314] border border-[#2a2b2f] text-white rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition" placeholder="i5-8250U" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1.5 font-medium">RAM</label>
+                    <input type="text" value={editForm.ram} onChange={(e) => setEditForm({ ...editForm, ram: e.target.value })} className="w-full bg-[#131314] border border-[#2a2b2f] text-white rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition" placeholder="8GB DDR4" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1.5 font-medium">Storage</label>
+                    <input type="text" value={editForm.storage} onChange={(e) => setEditForm({ ...editForm, storage: e.target.value })} className="w-full bg-[#131314] border border-[#2a2b2f] text-white rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition" placeholder="256GB SSD" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1.5 font-medium">OS</label>
+                    <input type="text" value={editForm.os} onChange={(e) => setEditForm({ ...editForm, os: e.target.value })} className="w-full bg-[#131314] border border-[#2a2b2f] text-white rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition" placeholder="Windows 10" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6 pt-5 border-t border-[#2a2b2f]">
+              <button onClick={() => setEditAsset(null)} className="flex-1 py-3 rounded-lg bg-[#131314] text-gray-400 hover:text-white hover:bg-[#2a2b2f] transition text-sm font-semibold">Cancel</button>
+              <button onClick={handleEditAsset} disabled={isSubmitting || !editForm.modelName || !editForm.serialNumber || !editForm.currentBid} className="flex-1 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white transition text-sm font-semibold shadow-lg flex items-center justify-center gap-2">
+                {isSubmitting ? (
+                  <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Saving...</>
+                ) : (
+                  "Save Changes"
+                )}
+              </button>
             </div>
           </div>
         </div>

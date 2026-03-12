@@ -26,7 +26,7 @@ export async function POST(request: Request) {
                 <p>The new minimum bid is now <strong>₱${Number(newBidAmount).toLocaleString()}</strong>.</p>
                 <p>If you still want this item, you will need to place a higher bid!</p>
                 <br/>
-                <p><em>- Voly</em></p>
+                <p><em>- Company Asset Sale Team</em></p>
               </div>
             `,
           })
@@ -51,7 +51,33 @@ export async function POST(request: Request) {
                 <br/>
                 <a href="${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}" style="display: inline-block; background: #2563eb; color: white; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600;">Browse Available Assets</a>
                 <br/><br/>
-                <p><em>- Voly</em></p>
+                <p><em>- Company Asset Sale Team</em></p>
+              </div>
+            `,
+          })
+        )
+      );
+      return NextResponse.json({ success: true, results });
+    }
+
+    if (type === "bid_reset") {
+      const results = await Promise.allSettled(
+        emails.map((email: string) =>
+          resend.emails.send({
+            from: 'Company Auction <onboarding@resend.dev>',
+            to: email,
+            subject: `Bid Reset: ${laptopModel} starting bid has been updated`,
+            html: `
+              <div style="font-family: sans-serif; color: #333;">
+                <h2 style="color: #f59e0b;">Bid Reset Notice</h2>
+                <p>Hello,</p>
+                <p>An admin has reset the starting bid for <strong>${laptopModel}</strong>. The new starting bid is now <strong>₱${Number(newBidAmount).toLocaleString()}</strong>.</p>
+                <p>Your previous bid on this item has been nullified as part of this reset.</p>
+                <p>If you're still interested, you are welcome to place a new bid at the updated price!</p>
+                <br/>
+                <a href="${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}" style="display: inline-block; background: #2563eb; color: white; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600;">Place a New Bid</a>
+                <br/><br/>
+                <p><em>- Company Asset Sale Team</em></p>
               </div>
             `,
           })

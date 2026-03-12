@@ -3,7 +3,14 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { LaptopCard } from "../components/LaptopCard";
-import { supabase } from "../lib/supabase"; // THE BRIDGE TO YOUR DATABASE
+import { supabase } from "../lib/supabase";
+
+const ADMIN_EMAILS = ['niel.garcia@volenday.com', 'patrick.manicad@volenday.com', 'brent.bueno@volenday.com'];
+
+const formatNameFromEmail = (email: string) => {
+  const local = email.split('@')[0];
+  return local.split('.').map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(' ');
+};
 
 // ----------------- COMPONENTS -----------------
 
@@ -152,7 +159,7 @@ function ProfileDropdown({ user, myBidsCount, onLoginClick, onMyBidsClick, onLog
   const router = useRouter();
   
   const isLoggedIn = !!user;
-  const isAdmin = isLoggedIn && user.email === "niel.garcia@volenday.com";
+  const isAdmin = isLoggedIn && ADMIN_EMAILS.includes(user.email);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -256,7 +263,6 @@ export default function Home() {
   // Modal & Drawer States
   const [isBidModalOpen, setIsBidModalOpen] = useState(false);
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
-  const [isSignUpSuccessOpen, setIsSignUpSuccessOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isMyBidsOpen, setIsMyBidsOpen] = useState(false);
   const [activeCartItem, setActiveCartItem] = useState<number | null>(null);
@@ -265,27 +271,14 @@ export default function Home() {
   const [isLoginSuccessOpen, setIsLoginSuccessOpen] = useState(false);
   const [isLoginRequiredOpen, setIsLoginRequiredOpen] = useState(false);
   const [authErrorMsg, setAuthErrorMsg] = useState<string | null>(null);
-  const [isResetSentOpen, setIsResetSentOpen] = useState(false);
-
-  // Custom Cancel Confirmation Modal State
-  const [bidToCancel, setBidToCancel] = useState<{bidId: number, laptopId: number} | null>(null);
-  const [isCanceling, setIsCanceling] = useState(false);
 
   // Stale bid alert modal
   const [isStaleBidAlertOpen, setIsStaleBidAlertOpen] = useState(false);
 
-  // Compare Logic State
-  const [compareIds, setCompareIds] = useState<number[]>([]);
-
   // Auth States
   const [user, setUser] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [isForgotPass, setIsForgotPass] = useState(false); 
-  const [authFullName, setAuthFullName] = useState("");
   const [landingView, setLandingView] = useState<'hero' | 'form'>('hero');
-  const [isMagicLinkMode, setIsMagicLinkMode] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [isMagicLinkSent, setIsMagicLinkSent] = useState(false);
   const [landingAuthError, setLandingAuthError] = useState("");
@@ -296,22 +289,9 @@ export default function Home() {
   const [myBids, setMyBids] = useState<any[]>([]); 
   const [lastPlacedBid, setLastPlacedBid] = useState<number>(0); 
 
-  // AI Chat State (Global Voly AI)
-  const initialVolyMessage = "Hi! I'm Voly, your personal assistant for today's internal laptop auction. We're clearing out company laptops with various minor defects, and you have the opportunity to snag one by placing a bid! You can browse the available units on the right, and select any laptop to see its full specs and photos on the left.\n\nTo place a bid, you'll need to create an account using your company email. This allows us to notify you if you're outbid and lets you track your offers in the 'My Bids' section. Feel free to use the filters to narrow down the list, or simply ask me to find exactly what you're looking for. Let me know how I can help!";
-  
-  const [isVolyOpen, setIsVolyOpen] = useState(false);
-  const [hasUnreadVolyMessage, setHasUnreadVolyMessage] = useState(true);
-  const [volyInput, setVolyInput] = useState("");
-  const [volyHistory, setVolyHistory] = useState<{role: 'user'|'assistant', content: string}[]>([
-    { role: 'assistant', content: initialVolyMessage }
-  ]);
-  const [isVolyLoading, setIsVolyLoading] = useState(false);
-  const volyScrollRef = useRef<HTMLDivElement>(null);
-  const volyContainerRef = useRef<HTMLDivElement>(null);
-
   // Bid Form State
   const [bidForm, setBidForm] = useState({
-    name: "", amount: "", paymentMode: "Cash", receiveMode: "Pickup", courier: "Motorcycle Courier", agreeAsIs: false, agreeNoWarranty: false,
+    amount: "", paymentMode: "Cash", receiveMode: "Pickup", courier: "Motorcycle Courier", agreeAsIs: false, agreeNoWarranty: false,
   });
 
   // ---------------- DATA FETCHING ----------------
@@ -431,19 +411,6 @@ export default function Home() {
     trackView();
   }, [selectedLaptop?.id, isMobilePreviewOpen]); 
 
-  useEffect(() => {
-    if (!isVolyOpen) return;
-    function handleClick(e: any) { 
-      if (volyContainerRef.current && !volyContainerRef.current.contains(e.target)) {
-        if (!e.target.closest('#voly-toggle-btn') && !e.target.closest('#ask-voly-product-btn') && !e.target.closest('#compare-voly-btn')) {
-          setIsVolyOpen(false); 
-        }
-      } 
-    }
-    window.addEventListener("mousedown", handleClick);
-    return () => window.removeEventListener("mousedown", handleClick);
-  }, [isVolyOpen]);
-
   // ---------------- SIDE EFFECTS ----------------
   useEffect(() => { 
     if(!selectedLaptop) return;
@@ -454,12 +421,7 @@ export default function Home() {
     }));
   }, [selectedLaptop]);
 
-  useEffect(() => {
-    if (volyScrollRef.current) volyScrollRef.current.scrollTop = volyScrollRef.current.scrollHeight;
-  }, [volyHistory, isVolyLoading, isVolyOpen]);
-
   // ---------------- LOGIC & HANDLERS ----------------
-  const paymentOptions = [{ label: "Cash", value: "Cash" }, { label: "GCash", value: "GCash" }, { label: "Bank Transfer", value: "Bank Transfer" }];
   const receiveOptions = [{ label: "Pickup", value: "Pickup" }, { label: "Delivery", value: "Delivery" }];
   const courierOptions = [{ label: "Motorcycle Courier (Angkas, Lalamove)", value: "Motorcycle Courier" }, { label: "LBC Express", value: "LBC" }];
 
@@ -483,10 +445,7 @@ export default function Home() {
   };
 
   const openLogin = () => {
-    setIsSignUp(false);
-    setIsForgotPass(false);
     setAuthEmail("");
-    setAuthPassword("");
     setIsLoginModalOpen(true);
   };
 
@@ -536,7 +495,7 @@ export default function Home() {
       const { error: bidError } = await supabase.from('bids').insert({
         laptop_id: selectedLaptop.id, 
         user_id: user.id, 
-        full_name: bidForm.name, 
+        full_name: formatNameFromEmail(user.email), 
         amount: bidAmount,
         payment_mode: bidForm.paymentMode, 
         receive_mode: bidForm.receiveMode, 
@@ -579,74 +538,18 @@ export default function Home() {
     }
   };
 
-  const confirmCancelBid = async () => {
-    if(!bidToCancel) return;
-    setIsCanceling(true);
-
-    try {
-      const { bidId, laptopId } = bidToCancel;
-
-      const { error: deleteError } = await supabase.from('bids').delete().eq('id', bidId);
-      if (deleteError) throw deleteError;
-
-      const { data: remainingBids, error: fetchError } = await supabase
-        .from('bids').select('amount').eq('laptop_id', laptopId).order('amount', { ascending: false });
-      if (fetchError) throw fetchError;
-
-      const newBidsCount = remainingBids ? remainingBids.length : 0;
-      let newCurrentBid = 0;
-
-      if (newBidsCount > 0) {
-        newCurrentBid = remainingBids![0].amount;
-      } else {
-        const lap = laptops.find(l => l.id === laptopId);
-        newCurrentBid = lap ? Math.max(lap.currentBid - 100, 0) : 0;
-      }
-
-      const { error: updateError } = await supabase.from('laptops')
-        .update({ current_bid: newCurrentBid, bids_count: newBidsCount }).eq('id', laptopId);
-      if (updateError) throw updateError;
-
-      await fetchLaptops();
-      await fetchMyBids();
-      if (selectedLaptop && selectedLaptop.id === laptopId) {
-        setSelectedLaptop((prev: any) => ({ ...prev, currentBid: newCurrentBid, bidsCount: newBidsCount }));
-      }
-      
-      setBidToCancel(null);
-
-    } catch (error: any) {
-      alert("Failed to cancel bid: " + error.message);
-    } finally {
-      setIsCanceling(false);
-    }
-  };
-
   const handleAuth = async () => {
     try {
-      if (isForgotPass) {
-        const { error } = await supabase.auth.resetPasswordForEmail(authEmail, {
-          redirectTo: `${window.location.origin}/`,
-        });
-        if (error) throw error;
-        setIsLoginModalOpen(false);
-        setIsResetSentOpen(true);
-      } else if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ 
-          email: authEmail, 
-          password: authPassword,
-          options: { data: { full_name: authFullName } }
-        });
-        if (error) throw error;
-        setIsLoginModalOpen(false);
-        setIsSignUpSuccessOpen(true);
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
-        if (error) throw error;
-        setIsLoginModalOpen(false);
-        setIsLoginSuccessOpen(true); 
+      if (!authEmail.endsWith('@volenday.com')) {
+        setAuthErrorMsg("Only Volenday employees can access this platform.");
+        return;
       }
-      setAuthEmail(""); setAuthPassword(""); setAuthFullName("");
+      const { error } = await supabase.auth.signInWithOtp({ email: authEmail });
+      if (error) throw error;
+      setIsLoginModalOpen(false);
+      setAuthErrorMsg(null);
+      setIsMagicLinkSent(true);
+      setLandingView('form');
     } catch (error: any) { 
       setAuthErrorMsg(error.message); 
     }
@@ -654,82 +557,20 @@ export default function Home() {
 
   const handleLandingAuth = async () => {
     setLandingAuthError("");
-    let showCheckEmail = false;
     try {
-      if (isForgotPass) {
-        const { error } = await supabase.auth.resetPasswordForEmail(authEmail, {
-          redirectTo: `${window.location.origin}/`,
-        });
-        if (error) throw error;
-        showCheckEmail = true;
-      } else if (isMagicLinkMode) {
-        const { error } = await supabase.auth.signInWithOtp({ email: authEmail });
-        if (error) throw error;
-        showCheckEmail = true;
-      } else if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ 
-          email: authEmail, 
-          password: authPassword,
-          options: { data: { full_name: authFullName } }
-        });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
-        if (error) throw error;
+      if (!authEmail.endsWith('@volenday.com')) {
+        setLandingAuthError("Only Volenday employees can access this platform.");
+        return;
       }
-      setAuthPassword(""); setAuthFullName("");
-      if (showCheckEmail) {
-        setIsMagicLinkSent(true);
-      } else {
-        setAuthEmail("");
-      }
+      const { error } = await supabase.auth.signInWithOtp({ email: authEmail });
+      if (error) throw error;
+      setIsMagicLinkSent(true);
     } catch (error: any) {
       setLandingAuthError(error.message);
     }
   };
 
-  const toggleCompare = (id: number) => {
-    setCompareIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-
-  const handleVolyMessage = async (customPrompt?: string) => {
-    const textToSend = customPrompt || volyInput;
-    if (!textToSend.trim()) return;
-
-    const newHistory = [...volyHistory, { role: 'user', content: textToSend }];
-    setVolyHistory(newHistory as any);
-    setVolyInput("");
-    setIsVolyLoading(true);
-
-    try {
-      const res = await fetch('/api/voly', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: textToSend, history: volyHistory, laptops: laptops })
-      });
-      const data = await res.json();
-      
-      if (data.filters) {
-        setActiveFilters((prev: any) => ({
-          ...prev,
-          models: data.filters.models || [],
-          defects: data.filters.defects || []
-        }));
-      }
-
-      if (data.reply) {
-        setVolyHistory([...newHistory, { role: 'assistant', content: data.reply }] as any);
-      } else {
-        setVolyHistory([...newHistory, { role: 'assistant', content: "I encountered an error connecting to the mainframe." }] as any);
-      }
-    } catch (error) {
-      setVolyHistory([...newHistory, { role: 'assistant', content: "Network error. Please check your connection." }] as any);
-    } finally {
-      setIsVolyLoading(false);
-    }
-  };
-
-  const isFormValid = bidForm.name.trim() !== "" && Number(bidForm.amount) >= (selectedLaptop?.currentBid + 100) && bidForm.agreeAsIs && bidForm.agreeNoWarranty;
+  const isFormValid = Number(bidForm.amount) >= (selectedLaptop?.currentBid + 100) && bidForm.agreeAsIs && bidForm.agreeNoWarranty;
 
   const activeUserBid = selectedLaptop ? myBids.find((b) => b.laptop.id === selectedLaptop.id) : null;
 
@@ -753,7 +594,7 @@ export default function Home() {
             <div className="absolute w-80 h-80 sm:w-96 sm:h-96 lg:w-[32rem] lg:h-[32rem] bg-blue-500/5 rounded-full blur-3xl"></div>
             <img 
               src="/voly.png" 
-              alt="Voly" 
+              alt="Mascot" 
               className="w-[19rem] h-[19rem] sm:w-[24.5rem] sm:h-[24.5rem] lg:w-[31.5rem] lg:h-[31.5rem] relative z-10 drop-shadow-[0_0_40px_rgba(59,130,246,0.15)] object-contain"
             />
           </div>
@@ -764,23 +605,17 @@ export default function Home() {
             {landingView === 'hero' && (
               <>
                 <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold text-white leading-[1.15] mb-4 tracking-tight">
-                  Affordable laptops in your fingertips
+                  Affordable laptops at your fingertips
                 </h1>
                 <p className="text-gray-400 text-sm sm:text-[15px] mb-10 leading-relaxed">
-                  Powered by Voly, our dependable AI-Agent to assist you from browsing to check out.
+                  Internal company asset auction. Sign in with your Volenday email to browse and bid.
                 </p>
                 <div className="flex flex-col gap-3 w-full max-w-xs mx-auto lg:mx-0">
                   <button 
-                    onClick={() => { setLandingView('form'); setIsSignUp(true); setIsForgotPass(false); setLandingAuthError(""); setIsMagicLinkMode(false); setIsMagicLinkSent(false); }}
+                    onClick={() => { setLandingView('form'); setLandingAuthError(""); setIsMagicLinkSent(false); }}
                     className="w-full py-3.5 rounded-xl bg-[#2563eb] text-white font-bold text-[15px] hover:bg-[#1d4ed8] active:scale-[0.98] transition-all shadow-lg shadow-blue-500/20 cursor-pointer"
                   >
-                    Sign Up
-                  </button>
-                  <button 
-                    onClick={() => { setLandingView('form'); setIsSignUp(false); setIsForgotPass(false); setLandingAuthError(""); setIsMagicLinkMode(false); setIsMagicLinkSent(false); }}
-                    className="w-full py-3.5 rounded-xl bg-transparent text-gray-300 font-bold text-[15px] border border-[#30363d] hover:bg-[#161b22] hover:text-white hover:border-gray-500 active:scale-[0.98] transition-all cursor-pointer"
-                  >
-                    Sign In
+                    Sign In with Magic Link
                   </button>
                 </div>
               </>
@@ -789,7 +624,7 @@ export default function Home() {
             {landingView === 'form' && !isMagicLinkSent && (
               <>
                 <button 
-                  onClick={() => { setLandingView('hero'); setLandingAuthError(""); setIsForgotPass(false); setIsMagicLinkMode(false); }}
+                  onClick={() => { setLandingView('hero'); setLandingAuthError(""); }}
                   className="mb-6 text-gray-500 hover:text-white text-sm flex items-center gap-2 transition cursor-pointer lg:self-start self-center"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -797,14 +632,10 @@ export default function Home() {
                 </button>
                 
                 <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2 tracking-tight">
-                  {isForgotPass ? 'Reset Password' : isSignUp ? 'Create an Account' : 'Welcome Back'}
+                  Welcome
                 </h2>
                 <p className="text-gray-400 text-sm mb-8">
-                  {isForgotPass 
-                    ? "Enter your email and we'll send you a reset link." 
-                    : isSignUp 
-                      ? 'Sign up with your company email to start bidding.' 
-                      : 'Sign in to continue where you left off.'}
+                  Enter your Volenday email and we&apos;ll send you a magic link to sign in.
                 </p>
                 
                 {landingAuthError && (
@@ -815,102 +646,24 @@ export default function Home() {
                 )}
                 
                 <div className="space-y-4 w-full">
-                  {isSignUp && !isMagicLinkMode && !isForgotPass && (
-                    <div>
-                      <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Full Name</label>
-                      <input 
-                        type="text" 
-                        placeholder="Juan Dela Cruz" 
-                        value={authFullName} 
-                        onChange={(e) => setAuthFullName(e.target.value)} 
-                        className="w-full bg-[#161b22] border border-[#30363d] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 outline-none text-sm transition" 
-                      />
-                    </div>
-                  )}
-                  
                   <div>
                     <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Email Address</label>
                     <input 
                       type="email" 
-                      placeholder="you@company.com" 
+                      placeholder="you@volenday.com" 
                       value={authEmail} 
                       onChange={(e) => setAuthEmail(e.target.value)} 
-                      onKeyDown={(e) => e.key === 'Enter' && (isMagicLinkMode || isForgotPass) && handleLandingAuth()}
+                      onKeyDown={(e) => e.key === 'Enter' && handleLandingAuth()}
                       className="w-full bg-[#161b22] border border-[#30363d] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 outline-none text-sm transition" 
                     />
                   </div>
-                  
-                  {!isMagicLinkMode && !isForgotPass && (
-                    <div>
-                      <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Password</label>
-                      <input 
-                        type="password" 
-                        placeholder="••••••••" 
-                        value={authPassword} 
-                        onChange={(e) => setAuthPassword(e.target.value)} 
-                        onKeyDown={(e) => e.key === 'Enter' && handleLandingAuth()}
-                        className="w-full bg-[#161b22] border border-[#30363d] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 outline-none text-sm transition" 
-                      />
-                    </div>
-                  )}
                   
                   <button 
                     onClick={handleLandingAuth}
                     className="w-full py-3.5 rounded-xl bg-[#2563eb] text-white font-bold text-[15px] hover:bg-[#1d4ed8] active:scale-[0.98] transition-all shadow-lg shadow-blue-500/20 cursor-pointer"
                   >
-                    {isForgotPass ? 'Send Reset Link' : isMagicLinkMode ? 'Send Magic Link' : isSignUp ? 'Create Account' : 'Sign In'}
+                    Send Magic Link
                   </button>
-                  
-                  {!isForgotPass && (
-                    <>
-                      <div className="flex items-center gap-4 py-1">
-                        <div className="flex-1 h-px bg-[#30363d]"></div>
-                        <span className="text-xs text-gray-600">or</span>
-                        <div className="flex-1 h-px bg-[#30363d]"></div>
-                      </div>
-                      
-                      <button 
-                        onClick={() => { setIsMagicLinkMode(!isMagicLinkMode); setLandingAuthError(""); }}
-                        className="w-full py-3 rounded-xl bg-[#161b22] border border-[#30363d] text-gray-400 font-medium text-sm hover:text-gray-200 hover:border-gray-500 transition cursor-pointer"
-                      >
-                        {isMagicLinkMode ? 'Use password instead' : 'Continue with Magic Link'}
-                      </button>
-                    </>
-                  )}
-                </div>
-                
-                <div className="mt-6 flex flex-col gap-3 text-center w-full">
-                  {!isForgotPass && (
-                    <button 
-                      onClick={() => { 
-                        setIsSignUp(!isSignUp); 
-                        setIsMagicLinkMode(false); 
-                        setLandingAuthError(""); 
-                        setAuthFullName(""); 
-                      }}
-                      className="text-sm text-gray-500 hover:text-white transition cursor-pointer underline underline-offset-4"
-                    >
-                      {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
-                    </button>
-                  )}
-                  
-                  {!isSignUp && !isForgotPass && !isMagicLinkMode && (
-                    <button 
-                      onClick={() => { setIsForgotPass(true); setLandingAuthError(""); }}
-                      className="text-xs text-gray-600 hover:text-gray-400 transition cursor-pointer"
-                    >
-                      Forgot your password?
-                    </button>
-                  )}
-                  
-                  {isForgotPass && (
-                    <button 
-                      onClick={() => { setIsForgotPass(false); setLandingAuthError(""); }}
-                      className="text-sm text-gray-500 hover:text-white transition cursor-pointer underline underline-offset-4"
-                    >
-                      Back to Sign In
-                    </button>
-                  )}
                 </div>
               </>
             )}
@@ -922,13 +675,10 @@ export default function Home() {
                 </div>
                 <h2 className="text-2xl font-bold text-white mb-2">Check Your Email</h2>
                 <p className="text-gray-400 text-sm mb-8 leading-relaxed">
-                  {isForgotPass 
-                    ? <>We&apos;ve sent a password reset link to <strong className="text-gray-200">{authEmail}</strong>. Please check your inbox.</>
-                    : <>We&apos;ve sent a magic link to <strong className="text-gray-200">{authEmail}</strong>. Click the link in your email to sign in.</>
-                  }
+                  We&apos;ve sent a magic link to <strong className="text-gray-200">{authEmail}</strong>. Click the link in your email to sign in.
                 </p>
                 <button 
-                  onClick={() => { setIsMagicLinkSent(false); setIsForgotPass(false); setLandingView('hero'); setAuthEmail(""); }}
+                  onClick={() => { setIsMagicLinkSent(false); setLandingView('hero'); setAuthEmail(""); }}
                   className="py-3 px-8 rounded-xl bg-[#161b22] border border-[#30363d] text-gray-300 font-bold hover:text-white hover:border-gray-500 transition cursor-pointer"
                 >
                   Back to Home
@@ -941,7 +691,7 @@ export default function Home() {
         
         {/* Footer */}
         <div className="pb-8 text-center">
-          <p className="text-gray-600 text-xs tracking-wide">Voly.ai, 2026 | Courtesy of <a href="https://volenday.com" target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-gray-400 transition-colors">volenday.com</a></p>
+          <p className="text-gray-600 text-xs tracking-wide">Company Asset Sale, 2026 | Courtesy of <a href="https://volenday.com" target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-gray-400 transition-colors">volenday.com</a></p>
         </div>
         
         {/* Sparkle decoration */}
@@ -970,10 +720,8 @@ export default function Home() {
                 <button 
                   onClick={() => { 
                     setExpiredLinkMessage(""); 
-                    setLandingView('form'); 
-                    setIsSignUp(false); 
-                    setIsMagicLinkMode(true); 
-                    setIsForgotPass(false); 
+                    setLandingView('form');
+                    setIsMagicLinkSent(false);
                   }} 
                   className="flex-1 py-3 rounded-xl bg-[#2563eb] text-white font-bold hover:bg-[#1d4ed8] active:scale-[0.98] transition-all cursor-pointer shadow-lg text-sm sm:text-base"
                 >
@@ -1078,7 +826,7 @@ export default function Home() {
                   <div className="absolute inset-0 [backface-visibility:hidden] flex flex-col justify-between bg-[#131314] p-4 lg:p-6 rounded-xl border border-[#2a2b2f]">
                     <div>
                       <div className="flex items-center gap-1.5 bg-[#2a2b2f] px-3 py-1.5 rounded-md text-xs sm:text-sm text-gray-300 w-fit mb-2 lg:mb-4 border border-[#3a3b3f]">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>
                         <span className="font-semibold">{selectedLaptop.bidsCount} Active Bids</span>
                       </div>
                       <p className="text-gray-500 text-[10px] sm:text-[11px] uppercase tracking-wider font-bold mb-1 lg:mb-2">Current Highest Bid</p>
@@ -1087,12 +835,9 @@ export default function Home() {
                     
                     <div className="flex flex-col gap-2 lg:gap-3 mt-auto">
                       {activeUserBid ? (
-                        <button 
-                          onClick={() => setBidToCancel({ bidId: activeUserBid.id, laptopId: selectedLaptop.id })} 
-                          className="w-full py-3 rounded-xl bg-red-500/10 text-red-500 font-bold text-sm lg:text-base border border-red-500/20 hover:bg-red-500 hover:text-white active:scale-[0.98] transition-all duration-200 flex items-center justify-center cursor-pointer whitespace-nowrap px-2"
-                        >
-                          Cancel Bid (₱{activeUserBid.myBid.toLocaleString()})
-                        </button>
+                        <div className="w-full py-3 rounded-xl bg-emerald-500/10 text-emerald-400 font-bold text-sm lg:text-base border border-emerald-500/20 flex items-center justify-center">
+                          Your Bid: ₱{activeUserBid.myBid.toLocaleString()}
+                        </div>
                       ) : (
                         <button 
                           onClick={() => {
@@ -1105,24 +850,14 @@ export default function Home() {
                         </button>
                       )}
                       
-                      <button 
-                        id="ask-voly-product-btn"
-                        onClick={() => { 
-                          setIsVolyOpen(true);
-                          setHasUnreadVolyMessage(false);
-                          handleVolyMessage(`Give me a bold, definitive opinion on whether I should buy this specific ${selectedLaptop.modelType} (S/N: ${selectedLaptop.serialNumber}) for ₱${selectedLaptop.currentBid}.`);
-                        }}
-                        className="w-full py-3 lg:py-3.5 rounded-xl bg-[#2a2b2f] text-gray-300 font-medium text-xs lg:text-sm hover:bg-[#3a3b3f] hover:text-blue-400 active:scale-[0.98] transition-all duration-200 flex items-center justify-center gap-2 border border-[#3a3b3f] cursor-pointer"
+                      <button
+                        onClick={() => setIsFlipped(true)}
+                        className="w-full py-3 lg:py-3.5 rounded-xl bg-[#2a2b2f] text-gray-300 font-medium text-xs lg:text-sm hover:bg-[#3a3b3f] hover:text-white active:scale-[0.98] transition-all duration-200 border border-[#3a3b3f] cursor-pointer"
                       >
-                        <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Voly&backgroundColor=transparent" className="w-4 h-4 lg:w-5 lg:h-5 opacity-80" alt="Voly" />
-                        Ask Voly about this
-                      </button>
-                      
-                      <button 
-                        onClick={() => setIsFlipped(true)} 
-                        className="text-[10px] lg:text-xs text-gray-500 hover:text-gray-300 transition-colors mt-1 lg:mt-2 text-center w-full underline underline-offset-4 cursor-pointer"
-                      >
-                        View Bidding Rules & Payments
+                        <span className="flex items-center justify-center gap-2 w-full">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+                          Bidding Rules
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -1135,17 +870,17 @@ export default function Home() {
                       </h3>
                       <ul className="text-[10px] lg:text-xs text-gray-400 space-y-2 list-disc list-inside mb-6 px-1">
                         <li>Minimum increment is <span className="text-gray-200 font-medium">₱100</span>.</li>
+                        <li>Laptops can have more than 1 defect type/s, so please keep that in mind.</li>
                         <li>Entered bid amount is final.</li>
-                        <li>Items are sold strictly "as is".</li>
+                        <li>Items are sold strictly &quot;as is&quot;.</li>
                         <li>There is no warranty for any items.</li>
                       </ul>
                       
                       <div className="flex flex-col items-center mt-auto mb-6">
-                        <h3 className="text-[9px] lg:text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-3">Accepted Payments</h3>
+                        <h3 className="text-[9px] lg:text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-3">Accepted Payment</h3>
                         <div className="flex items-center justify-center gap-3 lg:gap-4">
                           <div className="w-8 h-8 lg:w-10 lg:h-10 rounded-full bg-[#1e1f20] border border-[#2a2b2f] flex items-center justify-center text-emerald-400 shadow-sm" title="Cash"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg></div>
-                          <div className="w-8 h-8 lg:w-10 lg:h-10 rounded-full bg-[#1e1f20] border border-[#2a2b2f] flex items-center justify-center shadow-sm overflow-hidden p-1.5 lg:p-2" title="GCash"><img src="https://upload.wikimedia.org/wikipedia/commons/5/52/GCash_logo.svg" alt="GCash" className="w-full h-full object-contain" /></div>
-                          <div className="w-8 h-8 lg:w-10 lg:h-10 rounded-full bg-[#1e1f20] border border-[#2a2b2f] flex items-center justify-center text-gray-300 shadow-sm" title="Bank Transfer"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="5" height="5" rx="1"/><rect x="16" y="3" width="5" height="5" rx="1"/><rect x="3" y="16" width="5" height="5" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg></div>
+                          <span className="text-xs text-gray-400 font-medium">Cash Only</span>
                         </div>
                       </div>
 
@@ -1193,8 +928,7 @@ export default function Home() {
                 await supabase.auth.signOut(); 
                 setLandingView('hero'); 
                 setLandingAuthError(""); 
-                setIsMagicLinkSent(false); 
-                setIsMagicLinkMode(false);
+                setIsMagicLinkSent(false);
               }}
             />
           </div>
@@ -1219,12 +953,6 @@ export default function Home() {
                     setIsMobilePreviewOpen(true);
                   }
                 }}
-                
-                isCompared={compareIds.includes(laptop.id)}
-                onToggleCompare={(e: any) => {
-                  e.stopPropagation(); 
-                  toggleCompare(laptop.id);
-                }}
               />
             ))}
           </div>
@@ -1235,146 +963,10 @@ export default function Home() {
               </button>
             </div>
           )}
-          <div className={compareIds.length > 0 ? "pb-32" : "pb-24"} /> 
+          <div className="pb-24" /> 
         </div>
       </div>
 
-      {/* ======================================================== */}
-      {/* 📊 FLOATING COMPARE BAR */}
-      {/* ======================================================== */}
-      {compareIds.length > 0 && (
-        <div className="fixed bottom-24 lg:bottom-10 right-1/2 translate-x-1/2 lg:right-1/4 lg:translate-x-1/2 z-[80] bg-[#1e1f20]/95 backdrop-blur-xl border border-blue-500/30 shadow-[0_0_30px_rgba(59,130,246,0.15)] rounded-full pl-5 lg:pl-6 pr-2 lg:pr-3 py-2 flex items-center gap-3 lg:gap-4 animate-in slide-in-from-bottom-10 duration-300 w-max max-w-[90vw]">
-          <span className="text-xs lg:text-sm font-bold text-white whitespace-nowrap">{compareIds.length} <span className="font-normal text-gray-400 hidden sm:inline">selected</span></span>
-          <div className="h-4 lg:h-5 w-px bg-[#3a3b3f]"></div>
-          <button 
-            id="compare-voly-btn"
-            onClick={() => {
-              const selectedLaps = laptops.filter(l => compareIds.includes(l.id));
-              const names = selectedLaps.map(l => `${l.modelType} (S/N: ${l.serialNumber})`).join(", ");
-              setIsVolyOpen(true);
-              setHasUnreadVolyMessage(false);
-              handleVolyMessage(`Can you compare these specific laptops for me: ${names}? Please weigh the pros and cons of their specs and defects.`);
-            }} 
-            className="text-xs lg:text-sm font-bold text-blue-400 hover:text-white bg-blue-500/10 hover:bg-blue-500/30 px-3 lg:px-4 py-1.5 lg:py-2 rounded-full transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap"
-          >
-            <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Voly&backgroundColor=transparent" className="w-3 h-3 lg:w-4 lg:h-4 opacity-80" alt="Voly" />
-            <span className="hidden sm:inline">Compare with Voly</span>
-            <span className="sm:hidden">Compare</span>
-          </button>
-          <button onClick={() => setCompareIds([])} className="w-6 h-6 lg:w-8 lg:h-8 flex items-center justify-center rounded-full bg-[#131314] hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-colors cursor-pointer border border-[#2a2b2f] shrink-0">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </button>
-        </div>
-      )}
-
-
-      {/* ======================================================== */}
-      {/* 🤖 VOLY - THE GLOBAL AI AGENT */}
-      {/* ======================================================== */}
-
-      {/* Voly Floating Components Wrapper */}
-      <div className="fixed bottom-6 left-4 lg:left-10 z-[90] flex flex-col items-start gap-3 pointer-events-none">
-        
-        {/* Unread Sneak Peek Bubble */}
-        {!isVolyOpen && hasUnreadVolyMessage && (
-          <div 
-            className="relative bg-[#1e1f20]/95 backdrop-blur-xl border border-blue-500/30 p-3.5 rounded-2xl rounded-bl-none shadow-2xl w-64 md:w-72 pointer-events-auto cursor-pointer animate-bounce origin-bottom-left" 
-            style={{ animationDuration: '2s' }} 
-            onClick={() => { setIsVolyOpen(true); setHasUnreadVolyMessage(false); }}
-          >
-            <p className="text-xs text-gray-200 line-clamp-2 leading-relaxed">
-              Hi! I'm Voly, your personal assistant for today's internal laptop auction. We're clearing out...
-            </p>
-            <span className="text-[10px] text-blue-400 font-bold mt-1.5 block uppercase tracking-wider">Click to read more</span>
-            <div className="absolute -bottom-2 left-4 w-4 h-4 bg-[#1e1f20]/95 border-b border-l border-blue-500/30 transform -rotate-45"></div>
-          </div>
-        )}
-
-        {/* Voly Toggle Button */}
-        <button 
-          id="voly-toggle-btn"
-          onClick={() => { setIsVolyOpen(!isVolyOpen); setHasUnreadVolyMessage(false); }} 
-          className="pointer-events-auto bg-[#1e1f20]/90 backdrop-blur-md border border-[#2a2b2f] shadow-2xl rounded-full pl-1.5 pr-4 py-1.5 lg:pl-2 lg:pr-5 lg:py-2 flex items-center gap-2 lg:gap-3 transition-all duration-300 hover:scale-105 hover:bg-[#2a2b2f] group relative"
-        >
-          <div className="relative">
-            <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Voly&backgroundColor=131314" alt="Voly Logo" className="w-8 h-8 lg:w-10 lg:h-10 rounded-full border border-[#3a3b3f]" />
-            {/* Unread Red Badge on Voly */}
-            {hasUnreadVolyMessage && (
-              <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white shadow-sm border-2 border-[#1e1f20]">
-                1
-              </span>
-            )}
-          </div>
-          <span className="text-xs lg:text-sm font-bold text-white group-hover:text-blue-400 transition-colors tracking-wide">Ask Voly</span>
-        </button>
-      </div>
-
-      <div 
-        ref={volyContainerRef}
-        className={`fixed bottom-20 lg:bottom-24 left-4 lg:left-10 z-[100] w-[calc(100vw-32px)] md:w-[380px] h-[60vh] lg:h-[500px] max-h-[70vh] bg-[#101112]/95 backdrop-blur-3xl border border-[#2a2b2f] rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden transition-all duration-300 origin-bottom-left ${isVolyOpen ? 'scale-100 opacity-100 translate-y-0' : 'scale-50 opacity-0 pointer-events-none translate-y-10'}`}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a2b2f] bg-[#1e1f20]/50">
-          <div className="flex items-center gap-2.5">
-            <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Voly&backgroundColor=131314" className="w-7 h-7 rounded-full border border-[#3a3b3f]" alt="Voly" />
-            <span className="font-bold text-white text-sm tracking-wide">Voly</span>
-            <span className="bg-blue-500/20 text-blue-400 text-[9px] px-1.5 py-0.5 rounded font-bold tracking-widest uppercase">Agent</span>
-          </div>
-          <button onClick={() => setIsVolyOpen(false)} className="text-gray-500 hover:text-white p-1 rounded-md transition-colors cursor-pointer">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </button>
-        </div>
-
-        <div ref={volyScrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 custom-scrollbar">
-          
-          {/* MAP VOLY CHAT HISTORY */}
-          {volyHistory.map((msg, i) => (
-            <div key={i} className={`flex flex-col max-w-[90%] ${msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'}`}>
-              <div className={`px-4 py-3 rounded-xl text-xs sm:text-sm leading-relaxed ${msg.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-[#1e1f20] text-gray-200 border border-[#2a2b2f] shadow-lg rounded-bl-sm'}`}>
-                {/* Parse paragraphs cleanly */}
-                {msg.content.split('\n\n').map((paragraph, pIdx) => (
-                  <p key={pIdx} className={pIdx > 0 ? "mt-2" : ""}>{paragraph}</p>
-                ))}
-              </div>
-            </div>
-          ))}
-
-          {/* Render Quick Action Buttons below Voly's Intro Message */}
-          {volyHistory.length === 1 && (
-            <div className="flex flex-wrap justify-start gap-2 mt-1">
-              <button onClick={() => handleVolyMessage("Find me a laptop good for basic school tasks.")} className="bg-[#1e1f20] hover:bg-[#2a2b2f] text-[10px] sm:text-[11px] border border-[#2a2b2f] px-3 py-1.5 rounded-full transition-colors cursor-pointer text-gray-300 shadow-sm">"Good for school tasks"</button>
-              <button onClick={() => handleVolyMessage("Show me laptops that are damaged visually but work fine.")} className="bg-[#1e1f20] hover:bg-[#2a2b2f] text-[10px] sm:text-[11px] border border-[#2a2b2f] px-3 py-1.5 rounded-full transition-colors cursor-pointer text-gray-300 shadow-sm">"Only aesthetic damage"</button>
-            </div>
-          )}
-
-          {isVolyLoading && (
-            <div className="self-start px-4 py-3 bg-[#1e1f20] border border-[#2a2b2f] text-gray-400 rounded-xl rounded-bl-sm flex gap-1.5 items-center shadow-lg">
-              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"></div>
-              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-            </div>
-          )}
-        </div>
-
-        <div className="p-3 border-t border-[#2a2b2f] bg-[#1a1b1e]">
-          <div className="relative flex items-center">
-            <input 
-              type="text" 
-              placeholder="Ask Voly to find you a laptop..." 
-              value={volyInput}
-              onChange={(e) => setVolyInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleVolyMessage()}
-              className="w-full bg-[#131314] border border-[#2a2b2f] rounded-lg pl-4 pr-12 py-2.5 sm:py-3 text-xs sm:text-sm text-white outline-none focus:border-blue-500/50 transition shadow-inner" 
-            />
-            <button 
-              onClick={() => handleVolyMessage()}
-              disabled={!volyInput.trim() || isVolyLoading}
-              className={`absolute right-2 p-1.5 rounded-md transition-colors ${volyInput.trim() && !isVolyLoading ? 'text-blue-400 hover:bg-blue-500/10 cursor-pointer' : 'text-gray-600 cursor-not-allowed'}`}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="sm:w-[18px] sm:h-[18px]"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-            </button>
-          </div>
-        </div>
-      </div>
 
       {/* ---------------- OVERLAYS ---------------- */}
 
@@ -1439,98 +1031,34 @@ export default function Home() {
         </div>
       )}
 
-      {/* LOGIN & SIGNUP MODAL */}
+      {/* LOGIN MODAL (Magic Link Only) */}
       {isLoginModalOpen && (
         <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-2xl w-full max-w-sm p-6 sm:p-8 shadow-2xl relative">
             <button onClick={() => setIsLoginModalOpen(false)} className="absolute top-4 right-4 text-gray-500 hover:text-white transition cursor-pointer"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
-            <h2 className="text-xl sm:text-2xl font-bold text-white mb-6 text-center">
-              {isForgotPass ? "Reset Password" : isSignUp ? "Create an Account" : "Welcome Back"}
-            </h2>
+            <h2 className="text-xl sm:text-2xl font-bold text-white mb-2 text-center">Sign In</h2>
+            <p className="text-gray-400 text-xs sm:text-sm mb-6 text-center">Enter your Volenday email to receive a magic link.</p>
             
             <div className="space-y-4">
-              {isSignUp && !isForgotPass && (
-                <div>
-                  <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Full Name</label>
-                  <input 
-                    type="text" 
-                    placeholder="Juan Dela Cruz" 
-                    value={authFullName}
-                    onChange={(e) => setAuthFullName(e.target.value)}
-                    className="w-full bg-[#131314] border border-[#2a2b2f] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-gray-500 outline-none text-sm transition" 
-                  />
-                </div>
-              )}
               <div>
                 <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Email Address</label>
                 <input 
                   type="email" 
-                  placeholder="you@company.com" 
+                  placeholder="you@volenday.com" 
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
                   className="w-full bg-[#131314] border border-[#2a2b2f] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-gray-500 outline-none text-sm transition" 
                 />
               </div>
-              
-              {!isForgotPass && (
-                <div>
-                  <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Password</label>
-                  <input 
-                    type="password" 
-                    placeholder="••••••••" 
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    className="w-full bg-[#131314] border border-[#2a2b2f] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-gray-500 outline-none text-sm transition" 
-                  />
-                </div>
-              )}
               
               <button 
                 onClick={handleAuth}
                 className="w-full py-3 sm:py-3.5 rounded-xl bg-gray-100 text-black font-bold text-sm sm:text-base hover:bg-gray-300 active:scale-[0.98] transition-all duration-200 mt-2 cursor-pointer shadow-lg"
               >
-                {isForgotPass ? "Send Reset Link" : isSignUp ? "Sign Up" : "Sign In"}
+                Send Magic Link
               </button>
             </div>
-
-            <div className="mt-6 flex flex-col gap-3 text-center">
-              {!isForgotPass && !isSignUp && (
-                <button onClick={() => setIsForgotPass(true)} className="text-xs sm:text-sm text-gray-400 hover:text-white transition cursor-pointer">
-                  Forgot your password?
-                </button>
-              )}
-              
-              {isForgotPass ? (
-                <button onClick={() => setIsForgotPass(false)} className="text-xs sm:text-sm text-gray-400 hover:text-white transition cursor-pointer underline underline-offset-4">
-                  Back to Sign In
-                </button>
-              ) : (
-                <button onClick={() => setIsSignUp(!isSignUp)} className="text-xs sm:text-sm text-gray-400 hover:text-white transition cursor-pointer underline underline-offset-4">
-                  {isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up"}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* RESET LINK SENT MODAL */}
-      {isResetSentOpen && (
-        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-2xl w-full max-w-sm p-6 sm:p-8 shadow-2xl text-center flex flex-col items-center">
-            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mb-6">
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" className="sm:w-8 sm:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-            </div>
-            <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Reset Link Sent!</h2>
-            <p className="text-gray-400 text-xs sm:text-sm mb-8 leading-relaxed">
-              If an account exists for <strong className="text-gray-200">{authEmail}</strong>, we have sent a password reset link to it. Please check your inbox.
-            </p>
-            <button 
-              onClick={() => setIsResetSentOpen(false)} 
-              className="w-full py-3.5 rounded-xl bg-[#2a2b2f] text-gray-200 font-bold hover:bg-[#3a3b3f] active:scale-[0.98] transition-all duration-200 cursor-pointer"
-            >
-              Okay
-            </button>
           </div>
         </div>
       )}
@@ -1556,27 +1084,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* SIGN UP SUCCESS MODAL */}
-      {isSignUpSuccessOpen && (
-        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-2xl w-full max-w-sm p-6 sm:p-8 shadow-2xl text-center flex flex-col items-center">
-            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mb-6">
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" className="sm:w-8 sm:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>
-            </div>
-            <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Account Created!</h2>
-            <p className="text-gray-400 text-xs sm:text-sm mb-8 leading-relaxed">
-              Welcome aboard! Your account has been successfully set up. You can now place bids and chat with Voly.
-            </p>
-            <button 
-              onClick={() => setIsSignUpSuccessOpen(false)} 
-              className="w-full py-3.5 rounded-xl bg-[#2a2b2f] text-gray-200 font-bold hover:bg-[#3a3b3f] active:scale-[0.98] transition-all duration-200 cursor-pointer"
-            >
-              Get Started
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* PLACE BID MODAL */}
       {isBidModalOpen && (
         <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
@@ -1586,9 +1093,9 @@ export default function Home() {
             <p className="text-gray-400 text-xs sm:text-sm mb-6 pb-4 border-b border-[#2a2b2f]">You are bidding on: <span className="text-gray-200 font-semibold">{selectedLaptop.modelType} ({selectedLaptop.serialNumber})</span></p>
 
             <div className="space-y-4">
-              <div>
-                <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Full Name</label>
-                <input type="text" placeholder="e.g. Juan Dela Cruz" value={bidForm.name} onChange={(e) => setBidForm({...bidForm, name: e.target.value})} className="w-full bg-[#131314] border border-[#2a2b2f] text-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-gray-500 outline-none text-sm placeholder-gray-600 transition" />
+              <div className="bg-[#131314] border border-[#2a2b2f] rounded-lg px-4 py-3">
+                <p className="text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Bidding as</p>
+                <p className="text-sm text-gray-200 font-medium">{user ? formatNameFromEmail(user.email) : ''}</p>
               </div>
               
               <div>
@@ -1602,7 +1109,10 @@ export default function Home() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Payment Mode</label>
-                  <CustomDropdown value={bidForm.paymentMode} onChange={(v: string) => setBidForm({...bidForm, paymentMode: v})} options={paymentOptions} fullWidth={true} />
+                  <div className="bg-[#131314] border border-[#2a2b2f] text-gray-200 rounded-lg px-4 py-3 text-sm flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>
+                    Cash
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Receive Mode</label>
@@ -1678,37 +1188,6 @@ export default function Home() {
             >
               Return to Homepage
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* CANCEL CONFIRMATION MODAL */}
-      {bidToCancel && (
-        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#1e1f20] border border-[#2a2b2f] rounded-2xl w-full max-w-sm p-6 sm:p-8 shadow-2xl text-center flex flex-col items-center">
-            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center mb-4">
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" className="sm:w-8 sm:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
-            </div>
-            <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Cancel your bid?</h2>
-            <p className="text-gray-400 text-xs sm:text-sm mb-8 leading-relaxed">
-              Are you sure you want to cancel this bid? Your offer will be permanently removed.
-            </p>
-            <div className="flex gap-3 w-full">
-              <button 
-                onClick={() => setBidToCancel(null)} 
-                disabled={isCanceling}
-                className="flex-1 py-3 rounded-xl bg-[#2a2b2f] text-gray-300 font-bold hover:bg-[#3a3b3f] transition-all duration-200 cursor-pointer disabled:opacity-50 text-sm sm:text-base"
-              >
-                Keep Bid
-              </button>
-              <button 
-                onClick={confirmCancelBid} 
-                disabled={isCanceling}
-                className="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold hover:bg-red-500 active:scale-[0.98] transition-all duration-200 cursor-pointer disabled:opacity-50 text-sm sm:text-base"
-              >
-                {isCanceling ? "Canceling..." : "Yes, Cancel"}
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -1798,14 +1277,8 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="flex justify-between items-center pt-3 border-t border-[#2a2b2f] relative z-10">
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); setBidToCancel({ bidId: bid.id, laptopId: bid.laptop.id }); }}
-                      className="text-[9px] sm:text-[10px] text-gray-500 hover:text-red-400 uppercase font-bold tracking-wider transition-colors cursor-pointer"
-                    >
-                      Cancel Bid
-                    </button>
-                    {bid.status === 'outbid' && (
+                  {bid.status === 'outbid' && (
+                    <div className="flex justify-end items-center pt-3 border-t border-[#2a2b2f] relative z-10">
                       <button 
                         onClick={(e) => { 
                           e.stopPropagation(); 
@@ -1822,8 +1295,8 @@ export default function Home() {
                       >
                         Outbid (₱{bid.recommended?.toLocaleString()})
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               ))
             )}
